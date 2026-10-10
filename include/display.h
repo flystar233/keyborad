@@ -38,18 +38,20 @@ void DisplayTextCentered(uint8_t page, const char *str);
 // x, y 是全屏像素坐标（x 0..127，y 0..31），内部自动换算到页
 void DisplayPixel(uint8_t x, uint8_t y);
 
-// 电池图标：17x8 像素。percent 0..100 决定内部填充宽度，
+// 电池图标：8x8 像素（u8g2 官方字形，5 档）。percent 0..100 决定填充档位，
 // percent < 0 表示"没装电池"，画成空心（不做任何猜测）。
 // 几何参数在 display_icons.h；校验脚本 tools/verify_icons.py
 void DisplayIconBattery(uint8_t x, uint8_t y, int percent);
 
-// 连接状态图标：9x11 像素，经典蓝牙"B"符文。
-//   实心 = 已连接，空心 = 正在广播/配对中，两条竖线 = 蓝牙未启动
+// 连接状态图标：8x8 像素，u8g2 官方 bluetooth.png 字形。
+//   已连接 = 图标 + 右侧 2x2 实心点，配对中 = 只有图标，蓝牙未启动 = 不画
 enum BtIconState { BT_ICON_OFF = 0, BT_ICON_PAIRING, BT_ICON_CONNECTED };
 void DisplayIconBluetooth(uint8_t x, uint8_t y, BtIconState st);
 
-// 把帧缓冲推到 OLED。内部限流到 OLED_FLUSH_INTERVAL_MS，返回 true 表示真的发了
-bool DisplayFlush();
+// 把帧缓冲推到 OLED。内部限流到 OLED_FLUSH_INTERVAL_MS，返回 true 表示真的发了。
+// 返回 false 时调用方要保留"脏"标记、下一轮再刷，否则这一帧会丢。
+// force=true 跳过限流（串口诊断画测试图案时用）。
+bool DisplayFlush(bool force = false);
 
 // 对比度：low=true 时压到最低（低电 / 待机变暗），false 恢复 OLED_CONTRAST_NORMAL
 void DisplaySetDim(bool dim);

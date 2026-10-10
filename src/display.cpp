@@ -194,25 +194,40 @@ void DisplayIconBluetooth(uint8_t x, uint8_t y, BtIconState st) {
 }
 
 // ---------------------------------------------------------------- 刷屏
-bool DisplayFlush() {
+bool DisplayFlush(bool force) {
     if (!sPresent || !sPowerOn) return false;
 
     uint32_t now = millis();
-    if (now - sLastFlush < OLED_FLUSH_INTERVAL_MS) return false;
+    if (!force && now - sLastFlush < OLED_FLUSH_INTERVAL_MS) return false;
     sLastFlush = now;
 
-    Wire.beginTransmission(OLED_I2C_ADDR);
-    Wire.write((uint8_t)0x40);                      // 控制字节：后面是 GDDRAM 数据
-    // 分块写，避免一次塞满底层驱动缓冲
-    for (uint16_t i = 0; i < FB_SIZE; i++) {
-        Wire.write(sFb[i]);
-        if ((i & 0x7F) == 0x7F) {                   // 每 128 字节结束一次事务
-            if (Wire.endTransmission() != 0) return false;
-            if (i + 1 < FB_SIZE) {
-                Wire.beginTransmission(OLED_I2C_ADDR);
-                Wire.write((uint8_t)0x40);
-            }
+    // 【画面每刷一次就往左挪的根因】
+    //   以前每个事务是 1 个控制字节 + 128 个数据字节 = 129 字节，但 Arduino Wire 的
+    //   发送缓冲只有 I2C_BUFFER_LENGTH = 128 字节，满了 Wire.write() 直接返回 0、
+    //   不报错 —— 每个事务的最后一个数据字节被悄悄丢掉，一次刷屏只发出 508 字节。
+    //   SSD1306 的写指针因此每刷一次少走 4 列，下一帧整体错位 4 列，
+    //   按一次键刷几次屏，画面就往左"爬"一截；每页最右一列也从来没被写到。
+    //
+    // 两道防线：
+    //   1) 每次刷屏前重新设一次列/页地址窗口，把写指针拉回 (0,0)。
+    //      以后就算哪次 I2C 出错只发了半帧，下一帧也会从原点重新对齐，不会累积错位。
+    //   2) 每个事务只装 FLUSH_CHUNK 个数据字节，远小于 Wire 缓冲；
+    //      并检查 Wire.write() 的返回值，写不进去就当失败处理（调用方会重试）。
+    static const uint8_t setWindow[] = {
+        0x21, 0x00, OLED_WIDTH - 1,                 // 列地址 0..127
+        0x22, 0x00, PAGES - 1,                      // 页地址 0..3
+    };
+    if (!writeCmds(setWindow, sizeof(setWindow))) return false;
+
+    const uint16_t FLUSH_CHUNK = 32;                // 1 + 32 = 33 字节/事务
+    for (uint16_t off = 0; off < FB_SIZE; off += FLUSH_CHUNK) {
+        Wire.beginTransmission(OLED_I2C_ADDR);
+        Wire.write((uint8_t)0x40);                  // 控制字节：后面是 GDDRAM 数据
+        if (Wire.write(&sFb[off], FLUSH_CHUNK) != FLUSH_CHUNK) {
+            Wire.endTransmission();
+            return false;
         }
+        if (Wire.endTransmission() != 0) return false;
     }
     return true;
 }

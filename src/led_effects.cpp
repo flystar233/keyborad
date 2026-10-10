@@ -5,13 +5,13 @@
 //  每次发送 120 bit 约 150us，RMT 硬件保证时序，BLE 中断打断也不影响。
 //
 //  灯效模式的切换开关在 GPIO6（板上 U4 SH-1806SA，另一端接 GND）：
-//  每次检测到有效电平翻转就切到下一个灯效，所以点动按钮和拨动开关都能用，
-//  而且接反了也照样工作（两个方向都算一次翻转）。
+//  U4 是点按开关：这里只做消抖，短按切灯效 / 长按切模式由 SystemUpdate() 判定。
 // ============================================================================
 #include <Arduino.h>
 #include "board_config.h"
 #include "ws2812.h"
 #include "led_effects.h"
+#include "system.h"          // SystemMode：模式配色
 #include "usb_log.h"
 
 #define LED_REFRESH_MS      25      // 40Hz，人眼足够顺滑
@@ -24,17 +24,26 @@ static bool       sStripOk      = false;
 static LedLinkState sLink        = LED_LINK_OFF;
 static uint8_t      sMode        = 0;
 static bool         sLowBat      = false;
-static uint8_t      sEffect      = LED_FX_STATUS;
+static uint8_t      sEffect      = LED_FX_KEYS;     // 上电默认：全灭 + 按键反馈
 
 static uint32_t     sLastRefresh = 0;
 static uint32_t     sAnimPhase   = 0;      // 动画相位，每 5ms 累加
 static uint32_t     sLastFade    = 0;
 
-// 按键反馈：每颗键一个剩余亮度（255 -> 0 线性衰减）
+// 按键反馈：每颗键一个剩余亮度（255 -> 0 衰减），以及"缤纷按键"灯效用的随机色相
 static uint8_t      sKeyGlow[BUTTON_COUNT];
+static uint8_t      sKeyHue[BUTTON_COUNT];
 
-// 节拍器：拍到第几颗灯
-static int8_t       sBeatFlash   = -1;
+// K5 那颗灯的提醒（Claude 状态用），见 LedAttention
+static uint8_t      sAttn        = LED_ATTN_NONE;
+static uint32_t     sAttnAt      = 0;
+
+// 刚连上蓝牙的绿闪动画开始时刻，0 = 没在播
+static uint32_t     sConnectAnimAt = 0;
+// 没连上时切灯效：在这个时刻之前先预览新灯效，0 = 不预览
+#define EFFECT_PREVIEW_MS   3000
+static uint32_t     sPreviewUntil  = 0;
+
 
 // GPIO6 开关
 static uint8_t      sSwStable    = 1;      // 已消抖的闭合状态：1=闭合
@@ -44,6 +53,8 @@ static uint16_t     sSwToggles   = 0;
 
 // 每颗灯的 RGB 工作缓冲
 static uint8_t      sR[BUTTON_COUNT], sG[BUTTON_COUNT], sB[BUTTON_COUNT];
+
+static void railOnBlocking();           // 灯珠电源自动管理，定义在主循环前面
 
 // ---------------------------------------------------------------- 工具
 static inline uint8_t lerp8(uint8_t a, uint8_t b, uint8_t t) {
@@ -82,12 +93,12 @@ uint8_t LED_EffectsCount() { return (uint8_t)LED_FX_COUNT; }
 
 const char* LED_EffectsName(uint8_t fx) {
     switch (fx) {
-        case LED_FX_STATUS:  return "STATUS";
-        case LED_FX_SOLID:   return "SOLID";
-        case LED_FX_RAINBOW: return "RAINBOW";
-        case LED_FX_WAVE:    return "WAVE";
-        case LED_FX_CHASE:   return "CHASE";
-        case LED_FX_TWINKLE: return "TWINKLE";
+        case LED_FX_KEYS:          return "KEYS";
+        case LED_FX_WHITE:         return "WHITE";
+        case LED_FX_BREATHE:       return "BREATHE";
+        case LED_FX_RAINBOW_CHASE: return "RAINBOW_CHASE";
+        case LED_FX_RAINBOW:       return "RAINBOW";
+        case LED_FX_KEYS_COLOR:    return "KEYS_COLOR";
         default:             return "?";
     }
 }
@@ -96,6 +107,9 @@ void LED_EffectsSet(uint8_t fx) {
     if (fx >= LED_FX_COUNT) return;
     sEffect    = fx;
     sAnimPhase = 0;
+    // 没连上时整条灯是黄色呼吸，切了灯效看不出来 -> 先预览新灯效几秒
+    sPreviewUntil = millis() + EFFECT_PREVIEW_MS;
+    if (sPreviewUntil == 0) sPreviewUntil = 1;
     usbLog::printf("[led] effect -> %u/%u %s\n",
                    (unsigned)(fx + 1), (unsigned)LED_FX_COUNT, LED_EffectsName(fx));
 }
@@ -125,8 +139,9 @@ void LED_EffectsPollSwitch() {
 
     if (closed != sSwStable && (now - sSwChangeMs) >= LED_EFFECT_SWITCH_DEBOUNCE_MS) {
         sSwStable = closed;
-        sSwToggles++;
-        LED_EffectsNext();      // 一次有效翻转 = 切一个灯效
+        // 这里只做消抖和计数。短按切灯效 / 长按切模式的判定在 SystemUpdate() 里，
+        // 因为长按要切换的是系统模式，不归灯效模块管。
+        if (closed) sSwToggles++;
     }
 #endif
 }
@@ -168,18 +183,28 @@ void LED_EffectsInit() {
                    sStripOk ? "ok" : "FAIL", LED_EffectsName(sEffect));
 }
 
-void LED_EffectsSetLink(LedLinkState st) { sLink = st; }
-void LED_EffectsSetMode(uint8_t mode)    { sMode = mode; sBeatFlash = -1; }
+void LED_EffectsSetLink(LedLinkState st) {
+    // 从"没连上"变成"已连接"的那一刻，播一次绿闪
+    if (st == LED_LINK_CONNECTED && sLink != LED_LINK_CONNECTED) {
+        sConnectAnimAt = millis();
+        if (sConnectAnimAt == 0) sConnectAnimAt = 1;
+    } else if (st != LED_LINK_CONNECTED) {
+        sConnectAnimAt = 0;                 // 断开了就别再闪绿
+    }
+    sLink = st;
+}
+void LED_EffectsSetMode(uint8_t mode)    { sMode = mode; }
 void LED_EffectsSetLowBattery(bool low)  { sLowBat = low; }
 
-void LED_EffectsKeyFeedback(uint8_t keyIndex) {
-    if (keyIndex < BUTTON_COUNT) sKeyGlow[keyIndex] = 255;
+void LED_EffectsSetAttention(uint8_t attn) {
+    sAttn   = attn;
+    sAttnAt = millis();
 }
 
-void LED_EffectsBeat() {
-    static int8_t beat = 0;
-    beat = (int8_t)((beat + 1) % BUTTON_COUNT);
-    sBeatFlash = beat;
+void LED_EffectsKeyFeedback(uint8_t keyIndex) {
+    if (keyIndex >= BUTTON_COUNT) return;
+    sKeyGlow[keyIndex] = 255;
+    sKeyHue[keyIndex]  = (uint8_t)esp_random();   // "缤纷按键"灯效每次换一个颜色
 }
 
 // ---------------------------------------------------------------- 上电自检
@@ -188,6 +213,7 @@ void LED_EffectsSelfTest() {
         usbLog::print("[led] selftest skipped: RMT not ready\n");
         return;
     }
+    railOnBlocking();
     // 顺序点亮红/绿/蓝/白，一眼就能看出：能不能亮、颜色对不对、是不是 5 颗
     const uint8_t seq[4][3] = { {255,0,0}, {0,255,0}, {0,0,255}, {200,200,200} };
     const char  *name[4]    = { "RED", "GREEN", "BLUE", "WHITE" };
@@ -211,6 +237,7 @@ void LED_DiagChannelSweep() {
         usbLog::print("[diag] RMT not ready\n");
         return;
     }
+    railOnBlocking();
     const char *cname[3] = { "R", "G", "B" };
     const uint8_t ch[3][3] = { {255,0,0}, {0,255,0}, {0,0,255} };
 
@@ -234,91 +261,67 @@ void LED_DiagChannelSweep() {
     usbLog::print("[diag] sweep done\n");
 }
 
-void LED_DiagSingle(uint8_t idx, uint8_t channel) {
-    if (!sStripOk || idx >= LED_COUNT) return;
-    sStrip.clear();
-    switch (channel) {
-        case 0: sStrip.setPixel(idx, 255, 0, 0);   break;
-        case 1: sStrip.setPixel(idx, 0, 255, 0);   break;
-        default: sStrip.setPixel(idx, 0, 0, 255);  break;
-    }
-    sStrip.show();
-}
-
 // ---------------------------------------------------------------- 灯效动画
 // 每个动画只负责往 sR/sG/sB 里填色，后面的叠加逻辑统一在 composeFrame() 做
+#define CHASE_STEP_MS       110     // 炫彩跑马灯每格停留时间
+#define CHASE_HUE_STEP      23      // 每挪一格色相前进多少（255 一圈，约 11 格转一圈）
+#define BREATHE_PERIOD_MS   3200    // 呼吸一个来回
+
 static void renderEffect() {
     for (uint8_t i = 0; i < BUTTON_COUNT; i++) { sR[i] = sG[i] = sB[i] = 0; }
 
     switch (sEffect) {
-        // ---- 1) 状态指示：整条灯做暗绿呼吸（不看连接状态，自己就会动）----
-        //   第一版只在"已连接"时才呼吸，结果没配对时整条灯是纯黑，
-        //   看起来像"第一档没效果"。现在无条件呼吸，一眼就知道它在工作。
-        case LED_FX_STATUS: {
-            uint8_t v = (uint8_t)(25 + (uint16_t)tri(sAnimPhase, 3000) * 125 / 255);
+        // ---- 1) 默认：全灭，只靠按键反馈点亮（反馈在 composeFrame 里叠加）----
+        case LED_FX_KEYS:
+        case LED_FX_KEYS_COLOR:
+            break;
+
+        // ---- 2) 白色常亮 ----
+        case LED_FX_WHITE:
+            for (uint8_t i = 0; i < BUTTON_COUNT; i++) {
+                sR[i] = 255; sG[i] = 255; sB[i] = 255;
+            }
+            break;
+
+        // ---- 3) 呼吸：青蓝色，和"没连上"的黄色、"刚连上"的绿色都分得开 ----
+        //   亮度按三角波平方走（近似人眼的感知曲线），暗处停留更久、过渡更柔
+        case LED_FX_BREATHE: {
+            uint16_t t = tri(sAnimPhase, BREATHE_PERIOD_MS);
+            uint8_t  v = (uint8_t)(8 + (t * t / 255) * 247 / 255);
             for (uint8_t i = 0; i < BUTTON_COUNT; i++) {
                 sR[i] = 0;
-                sG[i] = v;
-                sB[i] = (uint8_t)((uint16_t)v / 4);      // 带一点蓝 -> 偏青绿
+                sG[i] = (uint8_t)((uint16_t)v * 150 / 255);
+                sB[i] = v;
             }
             break;
         }
 
-        // ---- 2) 常亮：稳定青色，不闪，和 1) 的呼吸一眼分得开 ----
-        case LED_FX_SOLID:
-            for (uint8_t i = 0; i < BUTTON_COUNT; i++) {
-                sR[i] = 0; sG[i] = 140; sB[i] = 80;
+        // ---- 4) 炫彩跑马灯：一颗亮点来回跑，每挪一格换一个颜色，后面拖两格余晖 ----
+        case LED_FX_RAINBOW_CHASE: {
+            const uint8_t period = (uint8_t)(BUTTON_COUNT * 2 - 2);      // 来回一趟 8 步
+            uint32_t step = sAnimPhase / CHASE_STEP_MS;
+            // 从最老的余晖画到亮点，后画的覆盖先画的（亮点永远在最上面）
+            for (int8_t age = 2; age >= 0; age--) {
+                if ((int32_t)step - age < 0) continue;
+                uint32_t s   = step - (uint32_t)age;
+                uint8_t  pos = (uint8_t)(s % period);
+                uint8_t  idx = (pos < BUTTON_COUNT) ? pos : (uint8_t)(period - pos);
+                uint8_t  r, g, b;
+                hueToRgb((uint8_t)(s * CHASE_HUE_STEP), &r, &g, &b);
+                uint8_t  k   = (age == 0) ? 255 : (age == 1 ? 70 : 18);   // 亮点 / 余晖
+                sR[idx] = (uint8_t)((uint16_t)r * k / 255);
+                sG[idx] = (uint8_t)((uint16_t)g * k / 255);
+                sB[idx] = (uint8_t)((uint16_t)b * k / 255);
             }
             break;
+        }
 
-        // ---- 3) 彩虹流动：整条色轮随时间平移 ----
+        // ---- 5) 彩虹流动：整条色轮随时间平移 ----
         case LED_FX_RAINBOW: {
             uint8_t base = (uint8_t)(sAnimPhase / 16);      // 约 4 秒转一圈
             for (uint8_t i = 0; i < BUTTON_COUNT; i++) {
                 uint8_t h = (uint8_t)(base + i * 255 / BUTTON_COUNT);
-                uint8_t r, g, b;
-                hueToRgb(h, &r, &g, &b);
-                sR[i] = (uint8_t)((uint16_t)r * 4 / 5);     // 压到 80% 免得刺眼
-                sG[i] = (uint8_t)((uint16_t)g * 4 / 5);
-                sB[i] = (uint8_t)((uint16_t)b * 4 / 5);
-            }
-            break;
-        }
-
-        // ---- 4) 波浪起伏：相邻灯相位错开 ----
-        case LED_FX_WAVE: {
-            for (uint8_t i = 0; i < BUTTON_COUNT; i++) {
-                uint8_t v = tri(sAnimPhase + (uint32_t)i * 350, 2400);
-                sR[i] = 0;
-                sG[i] = (uint8_t)((uint16_t)v * 160 / 255);
-                sB[i] = (uint8_t)((uint16_t)v * 220 / 255);
-            }
-            break;
-        }
-
-        // ---- 5) 跑马灯：一颗亮珠来回跑 ----
-        case LED_FX_CHASE: {
-            uint8_t period = (uint8_t)(BUTTON_COUNT * 2 - 2);         // 8
-            uint8_t pos    = (uint8_t)((sAnimPhase / 120) % period);   // 每 120ms 挪一格
-            uint8_t idx    = (pos < BUTTON_COUNT) ? pos : (uint8_t)(period - pos);
-            sR[idx] = 255; sG[idx] = 60; sB[idx] = 0;
-            int8_t trail = (int8_t)idx - 1;                            // 拖一点余晖
-            if (trail >= 0) { sR[trail] = 70; sG[trail] = 16; }
-            break;
-        }
-
-        // ---- 6) 随机闪烁：每 90ms 换一批暖白点 ----
-        case LED_FX_TWINKLE: {
-            uint32_t seed = sAnimPhase / 90;
-            for (uint8_t i = 0; i < BUTTON_COUNT; i++) {
-                uint32_t h = (seed + 1) * 2654435761UL + (uint32_t)i * 40503UL;
-                uint8_t  v = (uint8_t)((h >> 7) & 0xFF);
-                if (v > 150) {                      // 约 40% 概率点亮
-                    uint8_t b = (uint8_t)(70 + (h & 0x7F));
-                    sR[i] = b;
-                    sG[i] = (uint8_t)((uint16_t)b * 3 / 4);
-                    sB[i] = (uint8_t)((uint16_t)b / 2);
-                }
+                hueToRgb(h, &sR[i], &sG[i], &sB[i]);
             }
             break;
         }
@@ -329,72 +332,51 @@ static void renderEffect() {
 }
 
 // ---------------------------------------------------------------- 帧合成
-// 重构说明（实机反馈后改的）：
-//   第一版在"广播中"时把整条灯往橙色偏 90/255，结果 RAINBOW/WAVE/CHASE/TWINKLE
-//   四档在没配对时全被冲成同一种"橙色乱闪"，用户实际只能看出 3 种灯效。
-//   第二版改成只动第 1 颗灯，但那时它是"亮 200ms / 灭 1300ms"的普通闪烁，
-//   叠在青绿呼吸上看起来就是"一颗发黄、忽明忽暗的灯"，仍然误导。
-//   现在改成**双击闪**：一眼就能认出这是"未连接"的提示音式信号，
-//   不会被误当成灯效本身的颜色。
-//
-//     未连接 -> LED1 双击橙闪（闪-灭-闪，然后长灭），周期 2.4s
-//     已连接 -> LED1 单次绿心跳，周期 3s
-#define LINK_DBL_PERIOD_MS     2400     // 双击周期
-#define LINK_DBL_ON_MS         130      // 每下亮多久
-#define LINK_DBL_GAP_MS        140      // 两下之间
-#define LINK_HEARTBEAT_PERIOD  3000
-#define LINK_HEARTBEAT_ON_MS   300
+#define LINK_WAIT_PERIOD_MS    2000     // 没连上：黄色呼吸一个来回
+#define CONNECT_BLINKS         2        // 刚连上：绿色闪几下
+#define CONNECT_ON_MS          220
+#define CONNECT_OFF_MS         200
+
+// 刚连上的绿闪是否还在进行；在的话顺便告诉调用方这一刻是亮还是灭
+static bool connectAnimActive(uint32_t now, bool *on) {
+    if (sConnectAnimAt == 0) return false;
+    uint32_t t     = now - sConnectAnimAt;
+    uint32_t cycle = CONNECT_ON_MS + CONNECT_OFF_MS;
+    if (t >= cycle * CONNECT_BLINKS) {
+        sConnectAnimAt = 0;                 // 播完了
+        return false;
+    }
+    *on = (t % cycle) < CONNECT_ON_MS;
+    return true;
+}
 
 static void composeFrame() {
-    // 1) 灯效动画打底（满色，不做任何冲淡）
-    renderEffect();
+    uint32_t now = millis();
 
-    // 2) 连接状态指示：只动第一颗灯
-    if (sLink != LED_LINK_OFF) {
-        bool show = false;
-        uint8_t ir = 0, ig = 0, ib = 0;
-
-        if (sLink == LED_LINK_ADVERTISING) {
-            // 还没配对：双击橙闪。两下短闪 vs 灯效的连续渐变极好区分
-            uint32_t p = sAnimPhase % LINK_DBL_PERIOD_MS;
-            show = (p < LINK_DBL_ON_MS) ||
-                   (p >= (LINK_DBL_ON_MS + LINK_DBL_GAP_MS) &&
-                    p <  (LINK_DBL_ON_MS * 2 + LINK_DBL_GAP_MS));
-            ir = 255; ig = 90; ib = 0;
-        } else {
-            // 已连接：单次绿心跳，节奏慢，不抢戏
-            show = ((sAnimPhase % LINK_HEARTBEAT_PERIOD) < LINK_HEARTBEAT_ON_MS);
-            ir = 0; ig = 200; ib = 0;
+    // 1) 打底：连接状态优先，其次是灯效模式
+    bool blinkOn = false;
+    bool previewing = (sPreviewUntil != 0 && (int32_t)(now - sPreviewUntil) < 0);
+    if (connectAnimActive(now, &blinkOn)) {
+        // 刚连上：5 颗一起绿闪 2 下
+        for (uint8_t i = 0; i < BUTTON_COUNT; i++) {
+            sR[i] = 0; sG[i] = blinkOn ? 255 : 0; sB[i] = 0;
         }
-
-        if (show) {
-            sR[0] = ir;
-            sG[0] = ig;
-            sB[0] = ib;
+    } else if (sLink != LED_LINK_CONNECTED && !previewing) {
+        // 没连上：5 颗一起黄色明暗呼吸（最暗不全灭，一眼看得出"在等配对"）
+        uint16_t t = tri(sAnimPhase, LINK_WAIT_PERIOD_MS);
+        uint8_t  v = (uint8_t)(20 + (t * t / 255) * 235 / 255);
+        for (uint8_t i = 0; i < BUTTON_COUNT; i++) {
+            sR[i] = v;
+            sG[i] = (uint8_t)((uint16_t)v * 150 / 255);    // 黄 = 红满 + 绿六成，不偏绿
+            sB[i] = 0;
         }
+    } else {
+        renderEffect();
     }
 
-    // 3) 模式指示（定时器=蓝 / 节拍器=紫 / 配置=青）
+    // 2) 模式指示（预设切换=整条偏青）
     switch (sMode) {
-        case 1:  // MODE_TIMER_SET
-            for (uint8_t i = 0; i < BUTTON_COUNT; i++) {
-                sR[i] = lerp8(sR[i], 0,   180);
-                sG[i] = lerp8(sG[i], 60,  180);
-                sB[i] = lerp8(sB[i], 200, 180);
-            }
-            break;
-        case 2:  // MODE_METRONOME
-            for (uint8_t i = 0; i < BUTTON_COUNT; i++) {
-                sR[i] = lerp8(sR[i], 120, 180);
-                sG[i] = lerp8(sG[i], 0,   180);
-                sB[i] = lerp8(sB[i], 180, 180);
-            }
-            if (sBeatFlash >= 0) {
-                uint8_t k = (uint8_t)sBeatFlash;
-                sR[k] = 255; sG[k] = 255; sB[k] = 255;
-            }
-            break;
-        case 3:  // MODE_KEY_CONFIG
+        case MODE_KEY_CONFIG:
             for (uint8_t i = 0; i < BUTTON_COUNT; i++) {
                 sR[i] = lerp8(sR[i], 0,   180);
                 sG[i] = lerp8(sG[i], 200, 180);
@@ -405,16 +387,34 @@ static void composeFrame() {
             break;
     }
 
-    // 4) 按键反馈：按下的那颗闪白（优先级高于灯效）
+    // 3) 按键反馈：按下的那颗亮一下再渐暗（所有灯效都有）
+    //    · 平时是白色；白色常亮灯效下白色看不出来，改成青色
+    //    · "缤纷按键"灯效下每次按都是随机颜色
+    //    渐暗按平方走，结尾收得更柔，不会"啪"一下灭掉
     for (uint8_t i = 0; i < BUTTON_COUNT; i++) {
         if (sKeyGlow[i] == 0) continue;
-        uint8_t t = sKeyGlow[i];
-        sR[i] = lerp8(sR[i], 255, t);
-        sG[i] = lerp8(sG[i], 255, t);
-        sB[i] = lerp8(sB[i], 255, t);
+        uint8_t t = (uint8_t)((uint16_t)sKeyGlow[i] * sKeyGlow[i] / 255);
+        uint8_t kr = 255, kg = 255, kb = 255;
+        if (sEffect == LED_FX_KEYS_COLOR)  hueToRgb(sKeyHue[i], &kr, &kg, &kb);
+        else if (sEffect == LED_FX_WHITE)  { kr = 0; kg = 200; kb = 255; }
+        sR[i] = lerp8(sR[i], kr, t);
+        sG[i] = lerp8(sG[i], kg, t);
+        sB[i] = lerp8(sB[i], kb, t);
     }
 
-    // 5) 低电提示：整体压成暗红闪烁，优先级最高
+    // 3.5) K5 那颗灯的提醒：等你操作 = 橙色闪；做完 = 绿色闪 3 下
+    {
+        const uint8_t k = BUTTON_COUNT - 1;
+        if (sAttn == LED_ATTN_WAIT) {
+            if (((now - sAttnAt) / 400) % 2 == 0) { sR[k] = 255; sG[k] = 110; sB[k] = 0; }
+        } else if (sAttn == LED_ATTN_DONE) {
+            uint32_t t = now - sAttnAt;
+            if (t >= 1500)                { sAttn = LED_ATTN_NONE; }
+            else if ((t / 250) % 2 == 0)  { sR[k] = 0; sG[k] = 220; sB[k] = 40; }
+        }
+    }
+
+    // 4) 低电提示：整体压成暗红闪烁，优先级最高
     if (sLowBat) {
         bool on = ((sAnimPhase / 800) & 1) == 0;
         for (uint8_t i = 0; i < BUTTON_COUNT; i++) {
@@ -425,6 +425,30 @@ static void composeFrame() {
     }
 
     for (uint8_t i = 0; i < BUTTON_COUNT; i++) sStrip.setPixel(i, sR[i], sG[i], sB[i]);
+}
+
+// ---------------------------------------------------------------- 灯珠电源自动管理
+#define RAIL_IDLE_OFF_MS   60000UL  // 全黑持续这么久就断电
+#define RAIL_WARMUP_MS     5        // 上电后等这么久再发数据（灯珠 VDD 和去耦电容稳定）
+
+static bool     sRailOn      = true;    // LED_EffectsInit() 里已经上电
+static uint32_t sDarkSince   = 0;       // 从什么时候开始一直全黑，0 = 当前不是全黑
+static uint32_t sRailReadyAt = 0;
+
+static bool frameIsDark() {
+    for (uint8_t i = 0; i < BUTTON_COUNT; i++) {
+        if (sR[i] | sG[i] | sB[i]) return false;
+    }
+    return true;
+}
+
+// 自检 / 诊断这些阻塞式的直接点灯：确保电源是开的
+static void railOnBlocking() {
+    sDarkSince = 0;
+    if (sRailOn) return;
+    LED_PowerRailOn();
+    sRailOn = true;
+    delay(RAIL_WARMUP_MS);
 }
 
 // ---------------------------------------------------------------- 主循环
@@ -444,7 +468,7 @@ void LED_EffectsUpdate() {
         sAnimPhase += steps * 5;
 
         for (uint8_t i = 0; i < BUTTON_COUNT; i++) {
-            uint32_t drop = steps * 4;
+            uint32_t drop = steps * 2;      // 每 5ms 掉 2 -> 约 0.65 秒从最亮渐暗到灭
             sKeyGlow[i] = (sKeyGlow[i] > drop) ? (uint8_t)(sKeyGlow[i] - drop) : 0;
         }
     }
@@ -453,5 +477,31 @@ void LED_EffectsUpdate() {
     sLastRefresh = now;
 
     composeFrame();
+
+    // ---- 灯珠电源自动管理（GPIO21 高边开关）----
+    //   WS2812 全灭时每颗仍有 ~0.5~1mA 静态电流，5 颗共 3~5mA，用电池时白白耗电。
+    //   全黑持续 RAIL_IDLE_OFF_MS 就断电；一旦有要亮的帧，先上电等 RAIL_WARMUP_MS 再发数据。
+    if (frameIsDark()) {
+        if (sDarkSince == 0) sDarkSince = now ? now : 1;
+        if (sRailOn && (now - sDarkSince) >= RAIL_IDLE_OFF_MS) {
+            LED_PowerRailOff();
+            sRailOn = false;
+            usbLog::print("[led] all dark for 60s -> LED power OFF\n");
+        }
+        if (!sRailOn) return;               // 已断电，不用再发数据
+    } else {
+        sDarkSince = 0;
+        if (!sRailOn) {
+            LED_PowerRailOn();
+            sRailOn      = true;
+            sRailReadyAt = now + RAIL_WARMUP_MS;
+            // 让下一帧在 RAIL_WARMUP_MS 后就刷新，而不是再等一整个刷新周期
+            sLastRefresh = now - LED_REFRESH_MS + RAIL_WARMUP_MS;
+            usbLog::print("[led] LED power ON\n");
+            return;
+        }
+        if ((int32_t)(now - sRailReadyAt) < 0) return;   // 还在等电源稳定
+    }
+
     sStrip.show();
 }

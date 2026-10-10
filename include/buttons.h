@@ -12,12 +12,12 @@
 //  回调参数：
 //    pressed  : true = 按下（含长按触发、连发）；false = 抬起
 //    longPress: true = 这条事件是"按住超过 BTN_LONGPRESS_MS"
-//    repeat   : true = 这条是"按住不放的连发"（用于 BPM 加减、预设翻页）
+//    repeat   : true = 这条是"按住不放的连发"（用于预设翻页）
 //
 //  一次完整按下会产生的事件序列（按住超过 2 秒）：
 //    (pressed=1, long=0, rep=0)          <- 刚按下
-//    (pressed=1, long=0, rep=1) ...      <- 每 BTN_REPEAT_MS 一条
-//    (pressed=1, long=1, rep=0)          <- 满 2 秒，只报一次
+//    (pressed=1, long=0, rep=1) ...      <- 每 BTN_REPEAT_MS 一条，一直持续到松开
+//    (pressed=1, long=1, rep=0)          <- 满 2 秒，只报一次（目前上层不使用）
 //    (pressed=0, long=1, rep=0)          <- 抬起（long 表示这次是长按）
 // ============================================================================
 #pragma once

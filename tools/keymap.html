@@ -1,0 +1,683 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Keybrick 改键</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --panel: #ffffff; --ink: #1d2129; --muted: #6b7280; --line: #e3e6eb;
+    --accent: #1f7a6d; --accent-ink: #ffffff; --accent-soft: #e3f2ef;
+    --warn: #b45309; --warn-soft: #fef3c7; --err: #b42318; --err-soft: #fee4e2;
+    --chip: #eef0f3; --chip-on: #1f7a6d; --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #15171b; --panel: #1e2126; --ink: #e7e9ee; --muted: #9aa1ac; --line: #2e3238;
+      --accent: #3fb8a5; --accent-ink: #0d1412; --accent-soft: #1d332f;
+      --warn: #f2b53a; --warn-soft: #3a2f14; --err: #f97066; --err-soft: #3b1d1b;
+      --chip: #2a2e35; --chip-on: #3fb8a5;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 14px/1.5 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; }
+  header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+           padding: 14px 20px; background: var(--panel); border-bottom: 1px solid var(--line);
+           position: sticky; top: 0; z-index: 5; }
+  header h1 { font-size: 17px; margin: 0 8px 0 0; }
+  .status { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #9aa1ac; }
+  .dot.on { background: #16a34a; }
+  .spacer { flex: 1; }
+  button { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+           padding: 6px 12px; border-radius: 8px; cursor: pointer; }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  button.danger { color: var(--err); }
+  main { max-width: 1080px; margin: 0 auto; padding: 18px 20px 40px; }
+  .notice { padding: 10px 14px; border-radius: 8px; margin-bottom: 14px; }
+  .notice.warn { background: var(--warn-soft); color: var(--warn); }
+  .notice.err  { background: var(--err-soft);  color: var(--err); }
+  .notice.ok   { background: var(--accent-soft); color: var(--accent); }
+  .tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+  .tab { padding: 7px 14px; border-radius: 999px; background: var(--chip); border: 1px solid transparent; }
+  .tab.active { background: var(--accent); color: var(--accent-ink); }
+  .tab .cur { font-size: 11px; margin-left: 6px; opacity: .85; }
+  .tab.dirty::after { content: " ●"; color: var(--warn); }
+  .tab.active.dirty::after { color: var(--accent-ink); }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+  .row { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+  label.field { display: flex; flex-direction: column; gap: 4px; color: var(--muted); font-size: 12px; }
+  input[type=text], select { font: inherit; color: var(--ink); background: var(--bg);
+           border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; min-width: 0; }
+  input[type=text]:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  input.bad { border-color: var(--err); background: var(--err-soft); }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; padding: 6px 14px; }
+  .seg button.on { background: var(--accent); color: var(--accent-ink); }
+  .keys { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; margin-top: 16px; }
+  .key { border: 1px solid var(--line); border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+  .key h3 { margin: 0; font-size: 14px; display: flex; align-items: center; gap: 8px; }
+  .key h3 .combo { font-family: var(--mono); font-weight: 500; color: var(--accent); font-size: 13px; }
+  .key h3 .combo.empty { color: var(--muted); }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; }
+  .chip { padding: 3px 10px; border-radius: 999px; background: var(--chip); border: 1px solid transparent; font-size: 13px; }
+  .chip.on { background: var(--chip-on); color: var(--accent-ink); }
+  .keysel { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; align-items: end; }
+  .rec { white-space: nowrap; }
+  .rec.recording { background: var(--err); color: #fff; border-color: var(--err); }
+  .hint { color: var(--muted); font-size: 12px; }
+  .count { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+  details { margin-top: 18px; }
+  summary { cursor: pointer; color: var(--muted); }
+  pre#log { font-family: var(--mono); font-size: 12px; background: var(--panel); border: 1px solid var(--line);
+            border-radius: 8px; padding: 10px; max-height: 260px; overflow: auto; white-space: pre-wrap; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
+  @media (max-width: 520px) {
+    header, main { padding-left: 16px; padding-right: 16px; }
+    .keysel { grid-template-columns: 1fr 1fr; }
+    .keysel .rec { grid-column: span 2; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Keybrick 改键</h1>
+  <span class="status"><span class="dot" id="dot"></span><span id="statusText">未连接</span></span>
+  <span class="spacer"></span>
+  <button id="btnConnect" class="primary">连接键盘</button>
+  <button id="btnRead" disabled>从键盘读取</button>
+  <button id="btnWrite" class="primary" disabled>写入键盘</button>
+</header>
+
+<main>
+  <div id="notice"></div>
+
+  <div class="tabs" id="tabs"></div>
+
+  <section class="panel" id="editor" hidden>
+    <div class="row">
+      <label class="field" style="flex:1; min-width:200px">预设名（最多 19 个英文字符，显示在屏幕上）
+        <input type="text" id="presetName" maxlength="19">
+      </label>
+      <div class="field">
+        <span class="hint">类型</span>
+        <div class="seg" id="typeSeg">
+          <button data-type="kbd">普通快捷键</button>
+          <button data-type="media">媒体键</button>
+        </div>
+      </div>
+    </div>
+    <div class="keys" id="keys"></div>
+    <div class="actions">
+      <button id="btnUse" disabled>设为键盘当前预设</button>
+      <span class="spacer"></span>
+      <button id="btnExport">导出到文件</button>
+      <button id="btnImport">从文件导入</button>
+      <button id="btnReset" class="danger" disabled>恢复出厂预设</button>
+      <input type="file" id="fileInput" accept=".json,application/json" hidden>
+    </div>
+  </section>
+
+  <details>
+    <summary>通信日志</summary>
+    <pre id="log"></pre>
+  </details>
+</main>
+
+<script>
+"use strict";
+
+// ====================================================================== 常量
+const PRESET_COUNT_DEFAULT = 5;
+const KEY_COUNT = 5;
+const NAME_MAX = 19, DESC_MAX = 15;
+const ESPRESSIF_VID = 0x303A;
+
+const MODS = [
+  { bit: 0x01, label: "Ctrl" },
+  { bit: 0x02, label: "Shift" },
+  { bit: 0x04, label: "Alt" },
+  { bit: 0x08, label: "Win" },
+];
+
+// HID 键码（Keyboard/Keypad Page）。固件的报告描述符只接受 0x00..0x65。
+// [键码, 显示名, 屏幕说明用的 ASCII 名]
+const KEYS = [
+  [0x00, "（无）", ""],
+  ...Array.from({ length: 26 }, (_, i) => [0x04 + i, String.fromCharCode(65 + i), String.fromCharCode(65 + i)]),
+  ...Array.from({ length: 9 }, (_, i) => [0x1E + i, String(i + 1), String(i + 1)]),
+  [0x27, "0", "0"],
+  [0x28, "Enter", "Enter"], [0x29, "Esc", "Esc"], [0x2A, "Backspace", "Bksp"], [0x2B, "Tab", "Tab"],
+  [0x2C, "空格", "Space"], [0x2D, "-", "-"], [0x2E, "=", "="], [0x2F, "[", "["], [0x30, "]", "]"],
+  [0x31, "\\", "\\"], [0x33, ";", ";"], [0x34, "'", "'"], [0x35, "`", "`"], [0x36, ",", ","],
+  [0x37, ".", "."], [0x38, "/", "/"], [0x39, "CapsLock", "Caps"],
+  ...Array.from({ length: 12 }, (_, i) => [0x3A + i, "F" + (i + 1), "F" + (i + 1)]),
+  [0x46, "PrintScreen", "PrtSc"], [0x47, "ScrollLock", "ScrLk"], [0x48, "Pause", "Pause"],
+  [0x49, "Insert", "Ins"], [0x4A, "Home", "Home"], [0x4B, "PageUp", "PgUp"], [0x4C, "Delete", "Del"],
+  [0x4D, "End", "End"], [0x4E, "PageDown", "PgDn"],
+  [0x4F, "→", "Right"], [0x50, "←", "Left"], [0x51, "↓", "Down"], [0x52, "↑", "Up"],
+  [0x53, "NumLock", "NumLk"], [0x54, "小键盘 /", "Num/"], [0x55, "小键盘 *", "Num*"],
+  [0x56, "小键盘 -", "Num-"], [0x57, "小键盘 +", "Num+"], [0x58, "小键盘 Enter", "NumEnt"],
+  ...Array.from({ length: 9 }, (_, i) => [0x59 + i, "小键盘 " + (i + 1), "Num" + (i + 1)]),
+  [0x62, "小键盘 0", "Num0"], [0x63, "小键盘 .", "Num."], [0x65, "菜单键", "Menu"],
+];
+const KEY_BY_CODE = new Map(KEYS.map(k => [k[0], k]));
+
+// 浏览器 KeyboardEvent.code -> HID 键码（录制用）
+const CODE_TO_HID = (() => {
+  const m = {};
+  for (let i = 0; i < 26; i++) m["Key" + String.fromCharCode(65 + i)] = 0x04 + i;
+  for (let i = 1; i <= 9; i++) m["Digit" + i] = 0x1D + i;
+  m.Digit0 = 0x27;
+  Object.assign(m, {
+    Enter: 0x28, Escape: 0x29, Backspace: 0x2A, Tab: 0x2B, Space: 0x2C, Minus: 0x2D, Equal: 0x2E,
+    BracketLeft: 0x2F, BracketRight: 0x30, Backslash: 0x31, Semicolon: 0x33, Quote: 0x34,
+    Backquote: 0x35, Comma: 0x36, Period: 0x37, Slash: 0x38, CapsLock: 0x39,
+    PrintScreen: 0x46, ScrollLock: 0x47, Pause: 0x48, Insert: 0x49, Home: 0x4A, PageUp: 0x4B,
+    Delete: 0x4C, End: 0x4D, PageDown: 0x4E, ArrowRight: 0x4F, ArrowLeft: 0x50, ArrowDown: 0x51,
+    ArrowUp: 0x52, NumLock: 0x53, NumpadDivide: 0x54, NumpadMultiply: 0x55, NumpadSubtract: 0x56,
+    NumpadAdd: 0x57, NumpadEnter: 0x58, Numpad0: 0x62, NumpadDecimal: 0x63, ContextMenu: 0x65,
+  });
+  for (let i = 1; i <= 12; i++) m["F" + i] = 0x39 + i;
+  for (let i = 1; i <= 9; i++) m["Numpad" + i] = 0x58 + i;
+  return m;
+})();
+
+// 媒体键：16 位位图，与固件 Hid2Ble.cpp 的 Consumer 报告描述符顺序一致
+const MEDIA = [
+  [0x0000, "（无）", ""],
+  [0x0020, "音量 +", "Volume +"], [0x0040, "音量 −", "Volume -"], [0x0010, "静音", "Mute"],
+  [0x0008, "播放 / 暂停", "Play/Pause"], [0x0001, "下一曲", "Next Track"], [0x0002, "上一曲", "Prev Track"],
+  [0x0004, "停止", "Stop"], [0x0080, "浏览器主页", "Web Home"], [0x2000, "浏览器后退", "Web Back"],
+  [0x0800, "浏览器搜索", "Web Search"], [0x0400, "收藏夹", "Favorites"], [0x0200, "计算器", "Calculator"],
+  [0x0100, "我的电脑", "My Computer"], [0x8000, "邮件", "Mail"], [0x4000, "媒体播放器", "Media"],
+];
+const MEDIA_BY_CODE = new Map(MEDIA.map(m => [m[0], m]));
+
+// ====================================================================== 状态
+let port = null, reader = null, writer = null, readDone = null;
+let presets = [];          // [{ name, media, keys: [{ mod, k1, k2, media, desc, descAuto }] }]
+let devicePresets = [];    // 最近一次从键盘读到 / 写入的版本，用来判断"未写入"
+let presetCount = PRESET_COUNT_DEFAULT;
+let currentOnDevice = -1;
+let active = 0;
+let recording = -1;        // 正在录制的键号
+
+const $ = id => document.getElementById(id);
+const logEl = $("log");
+
+function log(line, dir) {
+  const prefix = dir === "tx" ? "→ " : dir === "rx" ? "← " : "   ";
+  logEl.textContent += prefix + line + "\n";
+  if (logEl.textContent.length > 60000) logEl.textContent = logEl.textContent.slice(-40000);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function notice(text, kind = "warn") {
+  $("notice").innerHTML = text ? `<div class="notice ${kind}"></div>` : "";
+  if (text) $("notice").firstChild.textContent = text;
+}
+
+// ====================================================================== 串口
+let rxBuf = "";
+let waiter = null;
+let queue = Promise.resolve();
+
+async function connect() {
+  if (!("serial" in navigator)) {
+    notice("这个浏览器不支持 Web Serial。请用电脑版 Chrome 或 Edge 打开本页面。", "err");
+    return;
+  }
+  try {
+    port = await navigator.serial.requestPort({ filters: [{ usbVendorId: ESPRESSIF_VID }] });
+  } catch (e) {
+    return;   // 用户取消了选择
+  }
+  try {
+    await port.open({ baudRate: 115200 });
+  } catch (e) {
+    notice("打不开串口：" + e.message + "。如果 PlatformIO 串口监视器或其它程序正占用这个串口，请先关掉它。", "err");
+    port = null;
+    return;
+  }
+  // 把 DTR/RTS 拉低：ESP32-C3 的 USB-Serial/JTAG 会把这两根线当成复位 / 下载模式控制
+  try { await port.setSignals({ dataTerminalReady: false, requestToSend: false }); } catch (e) {}
+
+  writer = port.writable.getWriter();
+  readDone = readLoop();
+  setConnected(true);
+
+  try {
+    let hello = null;
+    for (let i = 0; i < 3 && !hello; i++) {
+      try { hello = await request("HELLO", l => l.startsWith("@HELLO") ? l : undefined, 1500); }
+      catch (e) { /* 刚上电或刚复位，再试一次 */ }
+    }
+    if (!hello) throw new Error("键盘没有回应。请确认已经烧录了支持改键的固件（串口输入 ? 时帮助里有 @... 一行）。");
+    const parts = hello.split(/\s+/);
+    presetCount = parseInt(parts[3], 10) || PRESET_COUNT_DEFAULT;
+    currentOnDevice = parseInt(parts[5], 10);
+    await readFromDevice();
+    notice("");
+  } catch (e) {
+    notice(e.message, "err");
+  }
+}
+
+async function disconnect() {
+  // 先停读取循环并等它真正退出（port.readable 解锁后 close() 才能成功）
+  try { if (reader) await reader.cancel(); } catch (e) {}
+  try { if (readDone) await readDone; } catch (e) {}
+  try { if (writer) { writer.releaseLock(); } } catch (e) {}
+  try { if (port) await port.close(); } catch (e) {}
+  port = reader = writer = null;
+  setConnected(false);
+}
+
+async function readLoop() {
+  const decoder = new TextDecoderStream();
+  const closed = port.readable.pipeTo(decoder.writable).catch(() => {});
+  reader = decoder.readable.getReader();
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      rxBuf += value;
+      let nl;
+      while ((nl = rxBuf.indexOf("\n")) >= 0) {
+        const line = rxBuf.slice(0, nl).replace(/\r$/, "");
+        rxBuf = rxBuf.slice(nl + 1);
+        onLine(line);
+      }
+    }
+  } catch (e) {
+    log("读取出错：" + e.message);
+  } finally {
+    reader.releaseLock();
+    await closed;
+  }
+}
+
+function onLine(line) {
+  if (!line) return;
+  log(line, "rx");
+  if (line.startsWith("@") && waiter) waiter(line);
+}
+
+async function sendLine(text) {
+  log(text, "tx");
+  await writer.write(new TextEncoder().encode(text + "\n"));
+}
+
+// 发一条命令，handler 对每行 '@' 回复返回 undefined 表示继续等，返回其它值表示完成
+function request(cmd, handler, timeout = 4000) {
+  const run = () => new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { waiter = null; reject(new Error("等待回复超时：" + cmd)); }, timeout);
+    waiter = line => {
+      if (line.startsWith("@ERR")) {
+        clearTimeout(timer); waiter = null;
+        reject(new Error("键盘返回错误：" + line.slice(5)));
+        return;
+      }
+      const r = handler(line);
+      if (r !== undefined) { clearTimeout(timer); waiter = null; resolve(r); }
+    };
+    sendLine("@" + cmd).catch(e => { clearTimeout(timer); waiter = null; reject(e); });
+  });
+  const p = queue.then(run, run);
+  queue = p.catch(() => {});
+  return p;
+}
+
+// ====================================================================== 编解码
+const hexOfBytes = bytes => Array.from(bytes, b => b.toString(16).padStart(2, "0")).join("").toUpperCase();
+const bytesOfHex = hex => Uint8Array.from(hex.match(/../g) || [], h => parseInt(h, 16));
+const strToHex = s => s.length ? hexOfBytes(Array.from(s, c => c.charCodeAt(0))) : "-";
+const hexToStr = h => h === "-" ? "" : String.fromCharCode(...bytesOfHex(h));
+const isAscii = s => /^[\x20-\x7E]*$/.test(s);
+
+function parsePresetLine(line) {
+  // @P i media keys name d1..d5
+  const t = line.split(" ");
+  if (t.length !== 10) throw new Error("看不懂的回复：" + line);
+  const media = t[2] === "1";
+  const bytes = bytesOfHex(t[3]);
+  const keys = [];
+  for (let k = 0; k < KEY_COUNT; k++) {
+    const b = bytes.slice(k * 8, k * 8 + 8);
+    keys.push({
+      mod: media ? 0 : b[0], k1: media ? 0 : b[2], k2: media ? 0 : b[3],
+      media: media ? (b[0] | (b[1] << 8)) : 0,
+      desc: hexToStr(t[5 + k]), descAuto: false,
+    });
+  }
+  return { index: parseInt(t[1], 10), preset: { name: hexToStr(t[4]), media, keys } };
+}
+
+function presetToCommand(i, p) {
+  const bytes = [];
+  for (const k of p.keys) {
+    if (p.media) bytes.push(k.media & 0xFF, (k.media >> 8) & 0xFF, 0, 0, 0, 0, 0, 0);
+    else         bytes.push(k.mod, 0, k.k1, k.k2, 0, 0, 0, 0);
+  }
+  return ["SET", i, p.media ? 1 : 0, hexOfBytes(bytes), strToHex(p.name),
+          ...p.keys.map(k => strToHex(k.desc))].join(" ");
+}
+
+const clone = o => JSON.parse(JSON.stringify(o));
+const samePreset = (a, b) => JSON.stringify(stripAuto(a)) === JSON.stringify(stripAuto(b));
+function stripAuto(p) {
+  if (!p) return p;
+  const c = clone(p);
+  c.keys.forEach(k => delete k.descAuto);
+  return c;
+}
+
+// ====================================================================== 与键盘交互
+async function readFromDevice() {
+  const list = [];
+  await request("GET", line => {
+    if (line.startsWith("@P ")) { list.push(parsePresetLine(line)); return undefined; }
+    if (line === "@END") return true;
+    return undefined;
+  });
+  presets = [];
+  for (const { index, preset } of list) presets[index] = preset;
+  devicePresets = clone(presets);
+  if (active >= presets.length) active = 0;
+  render();
+}
+
+async function writeToDevice() {
+  const problems = validate();
+  if (problems.length) { notice("还不能写入：" + problems.join("；"), "err"); return; }
+  setBusy(true);
+  try {
+    for (let i = 0; i < presets.length; i++) {
+      await request(presetToCommand(i, presets[i]), l => l === "@OK SET " + i ? true : undefined);
+    }
+    await request("SAVE", l => l === "@OK SAVE" ? true : undefined, 6000);
+    devicePresets = clone(presets);
+    notice("已写入键盘并保存。断电后也会保留。", "ok");
+  } catch (e) {
+    notice(e.message, "err");
+  } finally {
+    setBusy(false);
+    render();
+  }
+}
+
+async function resetDevice() {
+  if (!confirm("把键盘上的 5 组预设恢复成出厂设置？你在键盘上保存过的改动会被清除。")) return;
+  setBusy(true);
+  try {
+    await request("RESET", l => l === "@OK RESET" ? true : undefined);
+    await readFromDevice();
+    notice("已恢复出厂预设。", "ok");
+  } catch (e) {
+    notice(e.message, "err");
+  } finally { setBusy(false); }
+}
+
+async function useOnDevice() {
+  try {
+    await request("USE " + active, l => l === "@OK USE " + active ? true : undefined);
+    currentOnDevice = active;
+    render();
+    if (!samePreset(presets[active], devicePresets[active])) {
+      notice("已切换到这组预设。注意：这组有改动还没写入，键盘上用的是写入前的版本。", "warn");
+    } else {
+      notice("键盘已切换到这组预设。", "ok");
+    }
+  } catch (e) { notice(e.message, "err"); }
+}
+
+// ====================================================================== 校验 / 显示文字
+function comboText(p, k) {
+  if (p.media) return k.media ? (MEDIA_BY_CODE.get(k.media) || [0, "未知媒体键"])[1] : "";
+  const parts = MODS.filter(m => k.mod & m.bit).map(m => m.label);
+  for (const c of [k.k1, k.k2]) if (c) parts.push((KEY_BY_CODE.get(c) || [c, "0x" + c.toString(16)])[1]);
+  return parts.join(" + ");
+}
+
+// 屏幕上的说明只能是 ASCII，最多 15 个字符
+function autoDesc(p, k) {
+  let s;
+  if (p.media) s = (MEDIA_BY_CODE.get(k.media) || [0, "", ""])[2];
+  else {
+    const parts = MODS.filter(m => k.mod & m.bit).map(m => m.label);
+    for (const c of [k.k1, k.k2]) if (c) parts.push((KEY_BY_CODE.get(c) || [c, "", "?"])[2]);
+    s = parts.join("+");
+  }
+  return s.slice(0, DESC_MAX);
+}
+
+function validate() {
+  const out = [];
+  presets.forEach((p, i) => {
+    const tag = `第 ${i + 1} 组`;
+    if (!isAscii(p.name)) out.push(`${tag}的预设名只能用英文、数字和符号`);
+    if (p.name.length > NAME_MAX) out.push(`${tag}的预设名超过 ${NAME_MAX} 个字符`);
+    p.keys.forEach((k, j) => {
+      if (!isAscii(k.desc)) out.push(`${tag} K${j + 1} 的说明只能用英文、数字和符号`);
+      if (k.desc.length > DESC_MAX) out.push(`${tag} K${j + 1} 的说明超过 ${DESC_MAX} 个字符`);
+    });
+  });
+  return out;
+}
+
+// ====================================================================== 界面
+function setConnected(on) {
+  $("dot").classList.toggle("on", on);
+  $("statusText").textContent = on ? "已连接" : "未连接";
+  $("btnConnect").textContent = on ? "断开" : "连接键盘";
+  $("btnConnect").classList.toggle("primary", !on);
+  ["btnRead", "btnWrite", "btnUse", "btnReset"].forEach(id => $(id).disabled = !on);
+  if (!on) currentOnDevice = -1;
+  render();
+}
+
+function setBusy(b) {
+  ["btnRead", "btnWrite", "btnUse", "btnReset", "btnConnect"].forEach(id => $(id).disabled = b || (id !== "btnConnect" && !port));
+}
+
+function render() {
+  const tabs = $("tabs");
+  tabs.innerHTML = "";
+  presets.forEach((p, i) => {
+    const b = document.createElement("button");
+    b.className = "tab" + (i === active ? " active" : "") + (samePreset(p, devicePresets[i]) ? "" : " dirty");
+    b.textContent = `${i + 1}. ${p.name || "（未命名）"}`;
+    if (i === currentOnDevice) {
+      const s = document.createElement("span"); s.className = "cur"; s.textContent = "当前"; b.appendChild(s);
+    }
+    b.onclick = () => { stopRecording(); active = i; render(); };
+    tabs.appendChild(b);
+  });
+
+  const p = presets[active];
+  $("editor").hidden = !p;
+  if (!p) {
+    if (!port) notice("用 USB 线把键盘连到电脑，然后点右上角「连接键盘」。", "warn");
+    return;
+  }
+
+  const nameEl = $("presetName");
+  if (document.activeElement !== nameEl) nameEl.value = p.name;
+  nameEl.classList.toggle("bad", !isAscii(p.name));
+
+  for (const btn of $("typeSeg").children) btn.classList.toggle("on", (btn.dataset.type === "media") === p.media);
+
+  const box = $("keys");
+  box.innerHTML = "";
+  p.keys.forEach((k, j) => box.appendChild(renderKey(p, k, j)));
+}
+
+function renderKey(p, k, j) {
+  const card = document.createElement("div");
+  card.className = "key";
+
+  const h = document.createElement("h3");
+  h.innerHTML = `K${j + 1} <span class="combo"></span>`;
+  const combo = h.querySelector(".combo");
+  const text = comboText(p, k);
+  combo.textContent = text || "空键（不发送）";
+  combo.classList.toggle("empty", !text);
+  card.appendChild(h);
+
+  if (p.media) {
+    const sel = document.createElement("select");
+    for (const [code, label] of MEDIA) sel.add(new Option(label, code));
+    sel.value = k.media;
+    sel.onchange = () => { k.media = parseInt(sel.value, 10); touchDesc(p, k); render(); };
+    const f = document.createElement("label"); f.className = "field"; f.textContent = "媒体功能";
+    f.appendChild(sel); card.appendChild(f);
+  } else {
+    const chips = document.createElement("div"); chips.className = "chips";
+    for (const m of MODS) {
+      const c = document.createElement("button");
+      c.className = "chip" + (k.mod & m.bit ? " on" : "");
+      c.textContent = m.label;
+      c.onclick = () => { k.mod ^= m.bit; touchDesc(p, k); render(); };
+      chips.appendChild(c);
+    }
+    card.appendChild(chips);
+
+    const ks = document.createElement("div"); ks.className = "keysel";
+    for (const which of ["k1", "k2"]) {
+      const f = document.createElement("label"); f.className = "field";
+      f.textContent = which === "k1" ? "按键" : "第二个按键（可选）";
+      const sel = document.createElement("select");
+      for (const [code, label] of KEYS) sel.add(new Option(label, code));
+      if (k[which] && !KEY_BY_CODE.has(k[which])) sel.add(new Option("0x" + k[which].toString(16), k[which]));
+      sel.value = k[which];
+      sel.onchange = () => { k[which] = parseInt(sel.value, 10); touchDesc(p, k); render(); };
+      f.appendChild(sel); ks.appendChild(f);
+    }
+    const rec = document.createElement("button");
+    rec.className = "rec" + (recording === j ? " recording" : "");
+    rec.textContent = recording === j ? "请按组合键…" : "录制";
+    rec.title = "点一下，然后在键盘上按下想要的组合键";
+    rec.onclick = () => { recording = recording === j ? -1 : j; render(); };
+    ks.appendChild(rec);
+    card.appendChild(ks);
+  }
+
+  const f = document.createElement("label"); f.className = "field";
+  f.innerHTML = `<span>屏幕说明 <span class="count"></span></span>`;
+  const inp = document.createElement("input");
+  inp.type = "text"; inp.maxLength = DESC_MAX; inp.value = k.desc;
+  inp.placeholder = "例如 Ctrl+C";
+  const cnt = f.querySelector(".count");
+  const upd = () => {
+    cnt.textContent = `${inp.value.length}/${DESC_MAX}`;
+    inp.classList.toggle("bad", !isAscii(inp.value));
+  };
+  upd();
+  inp.oninput = () => { k.desc = inp.value; k.descAuto = false; upd(); renderTabsOnly(); };
+  f.appendChild(inp);
+  card.appendChild(f);
+  return card;
+}
+
+// 说明是空的、或者之前是自动生成的，就跟着组合键自动更新
+function touchDesc(p, k) {
+  if (!k.desc || k.descAuto) { k.desc = autoDesc(p, k); k.descAuto = true; }
+}
+
+function renderTabsOnly() {
+  [...$("tabs").children].forEach((b, i) => b.classList.toggle("dirty", !samePreset(presets[i], devicePresets[i])));
+}
+
+function stopRecording() { if (recording >= 0) { recording = -1; render(); } }
+
+// ====================================================================== 录制组合键
+window.addEventListener("keydown", e => {
+  if (recording < 0) return;
+  const p = presets[active];
+  if (!p || p.media) return;
+  e.preventDefault();
+  e.stopPropagation();
+  if (["ControlLeft", "ControlRight", "ShiftLeft", "ShiftRight", "AltLeft", "AltRight",
+       "MetaLeft", "MetaRight", "OSLeft", "OSRight"].includes(e.code)) return;   // 等真正的按键
+  const hid = CODE_TO_HID[e.code];
+  if (hid === undefined) { notice(`这个键（${e.code}）键盘发不了，请换一个。`, "warn"); return; }
+  const k = p.keys[recording];
+  k.mod = (e.ctrlKey ? 0x01 : 0) | (e.shiftKey ? 0x02 : 0) | (e.altKey ? 0x04 : 0) | (e.metaKey ? 0x08 : 0);
+  k.k1 = hid; k.k2 = 0;
+  touchDesc(p, k);
+  recording = -1;
+  notice("");
+  render();
+}, true);
+
+// ====================================================================== 事件
+$("btnConnect").onclick = () => port ? disconnect() : connect();
+$("btnRead").onclick = async () => {
+  if (presets.some((p, i) => !samePreset(p, devicePresets[i])) &&
+      !confirm("页面上有还没写入的改动，重新读取会丢掉它们。继续？")) return;
+  try { await readFromDevice(); notice("已从键盘读取。", "ok"); } catch (e) { notice(e.message, "err"); }
+};
+$("btnWrite").onclick = writeToDevice;
+$("btnUse").onclick = useOnDevice;
+$("btnReset").onclick = resetDevice;
+
+$("presetName").oninput = e => {
+  presets[active].name = e.target.value;
+  e.target.classList.toggle("bad", !isAscii(e.target.value));
+  renderTabsOnly();
+  $("tabs").children[active].firstChild.textContent = `${active + 1}. ${e.target.value || "（未命名）"}`;
+};
+
+$("typeSeg").onclick = e => {
+  const t = e.target.dataset.type;
+  if (!t) return;
+  const p = presets[active];
+  const media = t === "media";
+  if (media === p.media) return;
+  if (!confirm("切换类型会清空这组 5 个键的设置。继续？")) return;
+  p.media = media;
+  p.keys = p.keys.map(() => ({ mod: 0, k1: 0, k2: 0, media: 0, desc: "", descAuto: true }));
+  stopRecording();
+  render();
+};
+
+$("btnExport").onclick = () => {
+  const data = JSON.stringify({ app: "keybrick-keymap", version: 1, presets: presets.map(stripAuto) }, null, 2);
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([data], { type: "application/json" }));
+  a.download = "keybrick-keymap.json";
+  a.click();
+  URL.revokeObjectURL(a.href);
+};
+$("btnImport").onclick = () => $("fileInput").click();
+$("fileInput").onchange = async e => {
+  const file = e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+  try {
+    const data = JSON.parse(await file.text());
+    if (data.app !== "keybrick-keymap" || !Array.isArray(data.presets)) throw new Error("不是改键导出的文件");
+    if (data.presets.length !== presetCount) throw new Error(`文件里有 ${data.presets.length} 组预设，键盘是 ${presetCount} 组`);
+    presets = data.presets.map(p => ({ ...p, keys: p.keys.map(k => ({ ...k, descAuto: false })) }));
+    render();
+    notice("已导入到页面。确认无误后点「写入键盘」。", "ok");
+  } catch (err) { notice("导入失败：" + err.message, "err"); }
+};
+
+if ("serial" in navigator) {
+  navigator.serial.addEventListener("disconnect", e => { if (e.target === port) { disconnect(); notice("键盘已断开。", "warn"); } });
+} else {
+  notice("这个浏览器不支持 Web Serial。请用电脑版 Chrome 或 Edge 打开本页面。", "err");
+}
+window.addEventListener("beforeunload", e => {
+  if (presets.some((p, i) => !samePreset(p, devicePresets[i]))) { e.preventDefault(); e.returnValue = ""; }
+});
+
+render();
+</script>
+</body>
+</html>

@@ -31,11 +31,8 @@
 //  原理图里 U4 一端接 GPIO6、另一端接 GND，用芯片内部上拉。
 //  所以"闭合/拨到接通位" = 读到低电平。
 //
-//  固件行为：每次检测到有效翻转（低->高 或 高->低）就切到下一个灯效。
-//  这样无论 U4 是"点动按钮"还是"拨动开关"都能用：
-//    - 点动：每按一下切一次
-//    - 拨动：来回拨，每拨一次切一次
-//  极性不用管（两个方向都算一次翻转），所以接反了也能工作。
+//  固件行为：U4 是点按开关，每按一下（断开 -> 闭合）切到下一个灯效，松开不算。
+//  （以前是"每次电平翻转都切"，结果按一下 = 按下 + 松开 = 连跳两档，已改。）
 // ============================================================================
 #define LED_EFFECT_SWITCH_PRESENT  1
 #define LED_EFFECT_SWITCH_PIN      6
@@ -112,22 +109,24 @@
 //  （两者都是 4.2V，纹波都在 ADC 噪声量级；要区分得测充电电流，硬件上没引出）。
 //  所以这里用一个明确的开关，而不是让软件瞎猜：
 //
-//    BATTERY_PRESENT = 0  -> 不采 ADC，OLED 显示 "USB" 而不是电量百分比
+//    BATTERY_PRESENT = 0  -> 不采 ADC，OLED 电池图标画成空心，不显示假电量
 //    BATTERY_PRESENT = 1  -> 正常显示电压和电量（装上电池后再打开）
 //
-//  也可以运行时切换：串口发 't'
+//  也可以运行时切换：串口发 'v'
 // ============================================================================
 #define BATTERY_ENABLED            1
-#define BATTERY_PRESENT            0       // <-- 没装电池就保持 0
+#define BATTERY_PRESENT            1       // <-- 已装电池；拆掉电池时改回 0
 #define BATTERY_ADC_PIN            3
 #define BATTERY_DIVIDER            0.5f     // (R9+R15) 比值：Vbat = Vadc / 0.5
 #define BATTERY_READ_INTERVAL_MS   10000UL  // 10s 读一次
 #define BATTERY_SAMPLES            16       // 每次读的采样平均次数
 
-// 电量区间（单节锂电，空载近似）
+// 电量：单节锂电，按放电曲线查表换算（见 battery.cpp 的 kBatCurve）。
+// 空电点取 3.40V：板上 LDO（TLV75733）要输出 3.3V，电池再往下 3V3 轨就开始跌，
+// 系统已经不稳定了，所以不按电芯的 2.5~3.0V 截止电压算。
 #define BAT_FULL_V                 4.20f
-#define BAT_LOW_V                  3.30f    // 低于此值判为低电 -> OLED 降亮度
-#define BAT_EMPTY_V                2.64f
+#define BAT_LOW_V                  3.50f    // 低于此值判为低电 -> 灯红闪、OLED 降亮度（约 5%）
+#define BAT_LOW_RELEASE_V          3.60f    // 回升到此值以上才解除低电（回差，防止临界时来回闪）
 
 // 校准微调：如果 OLED 显示的电压与万用表实测不符，改这个系数
 // 实测电压 = 芯片读数(V) / BATTERY_DIVIDER * BATTERY_CAL
@@ -142,4 +141,4 @@
 
 // BLE 设备名与制造商（会出现在电脑蓝牙列表里）
 #define BLE_DEVICE_NAME            "ESP32-C3 Keybrick"
-#define BLE_DEVICE_MANUFACTURER    "WilliTourt"
+#define BLE_DEVICE_MANUFACTURER    "Flystar & Claude"

@@ -81,8 +81,7 @@ void ButtonsPoll() {
         // ---- 按住满长按时间：只报一次 ----
         if (!sBtn[i].longFired && sBtn[i].downMs != 0 &&
             (now - sBtn[i].downMs) >= BTN_LONGPRESS_MS) {
-            sBtn[i].longFired    = true;
-            sBtn[i].nextRepeatMs = 0;                   // 长按已成立，停掉连发
+            sBtn[i].longFired    = true;               // 长按事件只报一次，连发照常继续
             if (sCb) sCb((ButtonId)i, true, true, false);
         }
     }

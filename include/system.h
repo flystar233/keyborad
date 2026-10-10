@@ -10,13 +10,11 @@
 // 注意：这几个值同时用于 LED_EffectsSetMode()，改动要一起改
 enum SystemMode {
     MODE_NORMAL     = 0,    // 正常键盘模式：按键打字
-    MODE_TIMER_SET  = 1,    // 倒计时设置
-    MODE_METRONOME  = 2,    // 节拍器
-    MODE_KEY_CONFIG = 3,    // 键位预设切换
+    MODE_KEY_CONFIG = 1,    // 键位预设切换
 };
 
 void SystemInit();
-void SystemUpdate();                    // 主循环调用：长按组合判定、节拍器/定时器推进、息屏
+void SystemUpdate();                    // 主循环调用：U4 短按/长按、预设确认、息屏
 
 // 按键事件入口（main 把它注册给 ButtonsInit）
 void SystemHandleButtonEvent(ButtonId id, bool pressed, bool longPress, bool repeat);
@@ -27,9 +25,6 @@ uint8_t SystemPeekPendingKey();         // 0xFF = 当前没有待发键
 void    SystemCompletePendingKey();
 bool    SystemTakeReleaseRequest();     // true = 需要发一条"全键释放"
 
-uint8_t SystemModeGet();
-bool    SystemKeyEnabled();
-
 // BLE 连接状态同步给显示层（main 在状态变化时调用）
 void SystemSetLink(LedLinkState st);
 
@@ -38,13 +33,9 @@ void SystemDrawDisplay();
 
 // 界面上的可见内容是否变了（变了才需要重画 + 刷屏）
 bool SystemDisplayDirty();
-void SystemDisplayMarkClean();
 
-// 屏幕是否被串口诊断冻结（冻结时 main 不应重画）
-bool SystemDisplayFrozen();
-
-// 只画两个图标（给串口诊断用）
-void SystemDrawIconsOnly();
+// 内容变了就重画并刷屏；被刷屏限流挡回来时保留脏标记，下一轮自动重试
+void SystemRefreshDisplay();
 
 // 发送一个键的按下（内部记账，由 SystemTick 负责释放）
 void SystemSendKeyPress(uint8_t keyIndex);

@@ -28,4 +28,3 @@ bool BatteryIsPresent();
 float   BatteryVoltage();       // 电池电压（V），未装电池时返回 0
 uint8_t BatteryPercent();       // 0..100，未装电池时返回 0
 bool    BatteryIsLow();         // 低于 BAT_LOW_V
-bool    BatteryIsCharging();    // 电压高于满电阈值 + 回差，说明 TP4056 正在充

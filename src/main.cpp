@@ -26,7 +26,6 @@
 #include "buzzer.h"
 #include "battery.h"
 #include "settings.h"
-#include "timer_metro.h"
 #include "system.h"
 
 // BLE HID 设备
@@ -34,6 +33,9 @@ static Hid2Ble sKeyboard(BLE_DEVICE_NAME, BLE_DEVICE_MANUFACTURER, 100);
 
 // 上一轮的连接状态，用于检测边沿
 static bool sWasConnected = false;
+
+// 最近发出的是不是媒体键（Consumer 报文）：是的话释放时也要发一条 Consumer 释放
+static bool sMediaHeld = false;
 
 // 自动重连：断开后等一段时间重新开始广播
 static uint32_t sDisconnectedAt = 0;
@@ -77,16 +79,12 @@ void setup() {
     // ---- 按键 ----
     ButtonsInit(onButtonEvent);
 
-    // ---- 定时器 / 节拍器 ----
-    TimerMetroInit();
-
     // ---- 系统层 ----
     SystemInit();
 
-    // ---- 灯效自检：红 -> 绿 -> 蓝 -> 白，确认 5 颗灯、线序、颜色都对 ----
-    LED_EffectsSelfTest();
-
     // ---- BLE 键盘 ----
+    // 放在灯效自检之前：begin() 只是起一个任务异步搭 BLE 栈，自检那 1 秒
+    // 正好让它在后台跑，开机后能更早被连上。
     // 【重要】begin() 只是创建一个 FreeRTOS 任务去异步搭 BLE 栈，
     // hid / inputKeyboard 要等那个任务跑完才有值。所以：
     //   - 库内部用 ready 标志保护了 setBatteryLevel / send2Ble / isConnected，
@@ -97,7 +95,11 @@ void setup() {
     LED_EffectsSetLink(LED_LINK_OFF);
     usbLog::printf("[ble] advertising as \"%s\"\n", BLE_DEVICE_NAME);
 
+    // ---- 灯效自检：红 -> 绿 -> 蓝 -> 白，确认 5 颗灯、线序、颜色都对 ----
+    LED_EffectsSelfTest();
+
     SystemNoteActivity();
+    BuzzerStartup();            // 开机音：自检之后再响，BuzzerUpdate() 在主循环里推进
     usbLog::print("[sys] ready. 串口敲 ? 看诊断命令\n");
 }
 
@@ -127,12 +129,12 @@ void loop() {
             LED_EffectsSetLink(LED_LINK_CONNECTED);
             SystemSetLink(LED_LINK_CONNECTED);
             sKeyboard.setBatteryLevel(BatteryPercent());
-            BuzzerOk();
+            BuzzerConnected();
             usbLog::print("[ble] HOST CONNECTED\n");
         } else {
             LED_EffectsSetLink(LED_LINK_ADVERTISING);
             SystemSetLink(LED_LINK_ADVERTISING);
-            BuzzerError();
+            BuzzerDisconnected();
             // 断开后不要立刻重启广播：有的主机会在断开瞬间马上回连，
             // 这里留 3 秒 + 最多 1.5 秒随机抖动，避开刚断开那一小段。
             sDisconnectedAt = millis() + RECONNECT_DELAY_MS + (esp_random() % 1500);
@@ -158,15 +160,26 @@ void loop() {
     SystemUpdate();
 
     // 5) 键盘报文发送：按下 -> 隔 60ms -> 释放（时序由系统层记账）
+    //    先发释放、再发按下：连续快按时，上一个键的释放请求和新键的按下会在同一轮里
+    //    出现，顺序反了的话新键刚按下就被这条释放取消掉。
     SystemTick();
     if (connected) {
-        uint8_t k = SystemPeekPendingKey();
-        if (k != 0xFF) {
-            sKeyboard.send2Ble((char *)SettingsKeyReport(k));
-            SystemCompletePendingKey();
-        }
         if (SystemTakeReleaseRequest()) {
             sKeyboard.send2Ble((char *)HID_RELEASE);
+            if (sMediaHeld) {
+                sKeyboard.sendMedia2Ble((char *)HID_RELEASE);
+                sMediaHeld = false;
+            }
+        }
+        uint8_t k = SystemPeekPendingKey();
+        if (k != 0xFF) {
+            if (SettingsCurrentPreset().isMedia) {
+                sKeyboard.sendMedia2Ble((char *)SettingsKeyReport(k));
+                sMediaHeld = true;
+            } else {
+                sKeyboard.send2Ble((char *)SettingsKeyReport(k));
+            }
+            SystemCompletePendingKey();
         }
     }
 
@@ -180,12 +193,12 @@ void loop() {
     // 7) 灯效
     LED_EffectsUpdate();
 
-    // 8) OLED：内容变了才重画 + 刷屏
-    if (SystemDisplayDirty()) {
-        SystemDrawDisplay();
-        DisplayFlush();
-        SystemDisplayMarkClean();
-    }
+    // 8) OLED：内容变了才重画 + 刷屏（被限流挡回来会在下一轮重试）
+    SystemRefreshDisplay();
 
-    // 主循环跑得越快，按键响应越准。这里不做任何 delay。
+    // 让出 CPU 1ms。
+    // 【之前的问题】loop() 没有任何等待，CPU 一直 100% 空转在 160MHz，电池供电时白白耗电。
+    // 1ms 对按键（20ms 消抖）、灯效（25ms 一帧）都毫无影响，
+    // 但 CPU 绝大部分时间可以进 idle，续航明显变长。
+    delay(1);
 }

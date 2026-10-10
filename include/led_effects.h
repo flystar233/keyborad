@@ -1,15 +1,19 @@
 // ============================================================================
 //  led_effects.h —— 5 颗灯珠的灯效
 //
-//  两种层次的灯效：
-//    1) 状态指示（始终有效，不会被灯效模式关掉）
-//       - 连接状态：未连接 / 广播中 / 已连接
-//       - 按下的那颗键闪白
-//       - 当前模式配色（定时器 / 节拍器 / 配置）
-//       - 低电提示
-//    2) 灯效模式：由 GPIO6 上的开关 U4 切换，决定"打底"的动画
+//  连接状态优先（盖住灯效模式）：
+//    - 还没连上蓝牙（上电 / 广播中 / 断线）：5 颗灯黄色一起明暗呼吸
+//    - 刚连上：5 颗灯绿色闪 2 下，然后交给当前灯效模式
+//    （没连上时按 U4 切灯效，会先预览新灯效 3 秒，再回到黄色呼吸）
 //
-//  优先级（高 -> 低）：低电 > 按键反馈 > 模式指示 > 灯效动画 > 连接状态
+//  灯效模式：GPIO6 上的 U4 短按循环切换（长按是切系统模式），上电默认第 1 个（按键反馈）。
+//
+//  叠加在最上面的：
+//    - 按下的那颗灯亮一下再渐暗（所有灯效都有）
+//    - 预设切换模式配色（整条偏青）
+//    - 低电提示
+//
+//  优先级（高 -> 低）：低电 > 按键反馈 > 模式指示 > 连接提示 > 灯效动画
 // ============================================================================
 #pragma once
 
@@ -24,12 +28,12 @@ enum LedLinkState {
 
 // 灯效模式（GPIO6 上的开关 U4 循环切换）
 enum LedEffect {
-    LED_FX_STATUS = 0,      // 状态指示：待机呼吸，最省心，默认
-    LED_FX_SOLID,           // 常亮：一眼看出连没连上
-    LED_FX_RAINBOW,         // 彩虹流动
-    LED_FX_WAVE,            // 正弦波起伏，5 颗依次呼吸
-    LED_FX_CHASE,           // 跑马灯
-    LED_FX_TWINKLE,         // 随机闪烁
+    LED_FX_KEYS = 0,        // 默认：全灭，只有按下的键亮一下再渐暗
+    LED_FX_WHITE,           // 白色常亮
+    LED_FX_BREATHE,         // 青蓝色整条呼吸
+    LED_FX_RAINBOW_CHASE,   // 炫彩跑马灯：亮点来回跑，颜色沿色轮变化，带拖尾
+    LED_FX_RAINBOW,         // 彩虹流动：整条色轮缓慢平移
+    LED_FX_KEYS_COLOR,      // 缤纷按键：全灭，按键时亮一个随机颜色再渐暗
     LED_FX_COUNT            // 数量，必须放最后
 };
 
@@ -39,7 +43,11 @@ void LED_EffectsSetMode(uint8_t mode);          // 与 SystemMode 对应，见 s
 void LED_EffectsSetLowBattery(bool low);
 
 void LED_EffectsKeyFeedback(uint8_t keyIndex);  // 0..4，按下时调用
-void LED_EffectsBeat();                         // 节拍器每一拍调用
+
+// 最右边那颗灯（K5）的提醒，叠在灯效上：
+//   LED_ATTN_WAIT = 橙色闪烁，直到改成别的；LED_ATTN_DONE = 绿色闪 3 下后自动熄灭
+enum LedAttention { LED_ATTN_NONE = 0, LED_ATTN_WAIT, LED_ATTN_DONE };
+void LED_EffectsSetAttention(uint8_t attn);
 
 // 上电自检：红 -> 绿 -> 蓝 -> 白，每步 250ms。阻塞式，只在 setup() 里调
 void LED_EffectsSelfTest();
@@ -49,9 +57,6 @@ void LED_EffectsSelfTest();
 // 例如第 1 颗灯发黄 = 红+绿亮、蓝不亮 -> 蓝通道故障。
 // 阻塞式，只在串口诊断命令里调。
 void LED_DiagChannelSweep();
-
-// 只让第 idx 颗灯的单个通道亮（0=R,1=G,2=B），其余全灭
-void LED_DiagSingle(uint8_t idx, uint8_t channel);
 
 // 主循环里定期调用（内部自己限流，调用频率随意）。
 // 内部也会轮询 GPIO6 开关，所以主循环不需要单独调 LED_EffectsPollSwitch()。
@@ -67,4 +72,4 @@ uint8_t LED_EffectsCount();
 
 // 开关 U4 的实时状态，用于诊断（确认接法是否符合预期）
 bool     LED_EffectSwitchClosed();              // 当前是否"闭合/接通"
-uint16_t LED_EffectSwitchToggleCount();         // 上电以来检测到多少次翻转
+uint16_t LED_EffectSwitchToggleCount();         // 上电以来 U4 被按了多少次
