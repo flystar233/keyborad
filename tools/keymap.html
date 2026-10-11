@@ -45,7 +45,7 @@
 
   /* ---------------------------------------------------------------- 顶栏 */
   .topbar { flex: none; position: relative; z-index: 10; background: var(--panel); border-bottom: 1px solid var(--line); }
-  .topbar-inner { max-width: 1680px; margin: 0 auto; padding: 12px 24px;
+  .topbar-inner { margin: 0 auto; padding: 12px 24px;
                   display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
   .brand { display: flex; align-items: center; gap: 10px; }
   .brand svg { flex: none; }
@@ -98,7 +98,7 @@
      .scene(透视) > .tilt(鼠标视差) > .float(悬浮 + 选中键时转向) > .kb(底面, 机位姿态)
      .kb 里：地面阴影、四个侧面、USB 线、顶面 #board（预设按钮 + 拨动开关 + OLED + 5 个立体键帽）
      模型按 900x300 的设计尺寸画，用 scale 适配舞台。 */
-  main { flex: 1; min-height: 0; padding: 14px 24px 18px; max-width: 1680px; width: 100%; margin: 0 auto; display: flex; }
+  main { flex: 1; min-height: 0; padding: 14px 24px 18px; width: 100%; display: flex; }
   .stage { position: relative; flex: 1; min-height: 300px; border-radius: 18px; border: 1px solid var(--line); overflow: hidden;
            background: radial-gradient(120% 90% at 50% 0%, var(--desk-hi), var(--desk-lo)); box-shadow: var(--shadow); }
   .scene { position: absolute; inset: 0; perspective: 1700px; perspective-origin: 50% 30%; }
@@ -113,13 +113,13 @@
            transition: transform .6s ease-out; }
   .float { animation: bob 6s ease-in-out infinite; }
   @keyframes bob { 50% { transform: translateY(var(--bob, 0px)); } }
-  .kb { --T: 26px; --kh: 20px;
+  .kb { --T: 46px; --kh: 30px;
         transform: translateY(var(--ky, 0px)) rotateX(var(--rx)) rotateZ(var(--rz)) scale(var(--s));
         transition: transform .95s cubic-bezier(.65, 0, .25, 1); }
   [data-view=home] .kb    { --rx: 58deg; --rz: -24deg; --s: var(--s-home, .6); --ky: var(--ky-home, -60px); }
   [data-view=home] .float { --bob: -14px; }
-  [data-view=edit] .kb    { --rx: 30deg; --rz: 0deg;   --s: var(--s-edit, 1); --ky: var(--ky-edit, 0px); }
-  [data-view=edit][data-sel] .kb { --rx: 34deg; --s: var(--s-sel, .9); --ky: var(--ky-sel, -80px); }
+  [data-view=edit] .kb    { --rx: 33deg; --rz: 0deg;   --s: var(--s-edit, 1); --ky: var(--ky-edit, 0px); }
+  [data-view=edit][data-sel] .kb { --rx: 37deg; --s: var(--s-sel, .9); --ky: var(--ky-sel, -80px); }
 
   .ground { position: absolute; inset: 4% 2%; border-radius: 40px; background: var(--ground); filter: blur(26px);
             transform: translateZ(-2px); }
@@ -1017,9 +1017,10 @@ function setFocusAngle(j) {
 function layoutStage() {
   const st = $("stage");
   const w = st.clientWidth, h = st.clientHeight;
-  const sEdit = Math.max(.36, Math.min(1.6, (w - 56) / (KB_W * 1.02), (h * .56) / KB_H));
-  const sSel = Math.max(.36, Math.min(sEdit, (h * .34) / KB_H));
-  const sHome = Math.max(.32, Math.min(.72, (w - 24) / (KB_W * 1.05), (h * .5) / 330));
+  const sEdit = Math.max(.36, Math.min(2.6, (w - 56) / (KB_W * 1.02), (h * .58) / KB_H));
+  // 选中键时给下方卡片留出约 420px；高屏（带鱼屏）上不用缩那么多
+  const sSel = Math.max(.36, Math.min(sEdit, Math.max(h * .34, h - 420) / KB_H));
+  const sHome = Math.max(.32, Math.min(1.4, (w - 24) / (KB_W * 1.05), (h * .5) / 330));
   st.style.setProperty("--s-edit", sEdit.toFixed(3));
   st.style.setProperty("--s-home", sHome.toFixed(3));
   st.style.setProperty("--s-sel", sSel.toFixed(3));
