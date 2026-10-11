@@ -39,12 +39,13 @@
   * { box-sizing: border-box; }
   [hidden] { display: none !important; }
   html, body { height: 100%; }
-  body { margin: 0; background: var(--bg); color: var(--ink); display: flex; flex-direction: column;
+  /* 页面正好一屏高：舞台吃掉剩余高度，模型按舞台大小缩放，不出整页滚动条 */
+  body { height: 100vh; height: 100dvh; margin: 0; background: var(--bg); color: var(--ink); display: flex; flex-direction: column;
          font: 14px/1.5 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; }
 
   /* ---------------------------------------------------------------- 顶栏 */
   .topbar { flex: none; position: relative; z-index: 10; background: var(--panel); border-bottom: 1px solid var(--line); }
-  .topbar-inner { max-width: 1280px; margin: 0 auto; padding: 12px 24px;
+  .topbar-inner { max-width: 1680px; margin: 0 auto; padding: 12px 24px;
                   display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
   .brand { display: flex; align-items: center; gap: 10px; }
   .brand svg { flex: none; }
@@ -97,10 +98,15 @@
      .scene(透视) > .tilt(鼠标视差) > .float(悬浮 + 选中键时转向) > .kb(底面, 机位姿态)
      .kb 里：地面阴影、四个侧面、USB 线、顶面 #board（预设按钮 + 拨动开关 + OLED + 5 个立体键帽）
      模型按 900x300 的设计尺寸画，用 scale 适配舞台。 */
-  main { flex: 1; min-height: 0; padding: 14px 24px 18px; max-width: 1280px; width: 100%; margin: 0 auto; display: flex; }
-  .stage { position: relative; flex: 1; min-height: 540px; border-radius: 18px; border: 1px solid var(--line); overflow: hidden;
+  main { flex: 1; min-height: 0; padding: 14px 24px 18px; max-width: 1680px; width: 100%; margin: 0 auto; display: flex; }
+  .stage { position: relative; flex: 1; min-height: 300px; border-radius: 18px; border: 1px solid var(--line); overflow: hidden;
            background: radial-gradient(120% 90% at 50% 0%, var(--desk-hi), var(--desk-lo)); box-shadow: var(--shadow); }
   .scene { position: absolute; inset: 0; perspective: 1700px; perspective-origin: 50% 30%; }
+  /* 模型往后倾斜时，上半部分（预设圆钮 / 拨动开关）在 3D 空间里会落到 .tilt/.float 这些
+     透明容器平面的后面，被它们挡住点击。容器一律不接收指针，只让真正的控件接收。 */
+  .scene, .scene * { pointer-events: none; }
+  .scene button, .scene input, .scene .oname { pointer-events: auto; }
+  [data-view=home] .scene button, [data-view=home] .scene .oname { pointer-events: none; }
   .tilt, .float, .kb { position: absolute; left: 50%; top: 50%; width: 900px; height: 300px;
                        margin: -150px 0 0 -450px; transform-style: preserve-3d; }
   .tilt  { transform: rotateX(var(--px, 0deg)) rotateY(calc(var(--py, 0deg) + var(--fy, 0deg)));
@@ -263,6 +269,7 @@
                  background: var(--panel); border-left: 1px solid var(--line); border-top: 1px solid var(--line);
                  transform: rotate(45deg); }
   .pop.above::before { top: auto; bottom: -7px; transform: rotate(225deg); }
+  .pop.beside::before { display: none; }
   .pop-head { display: flex; align-items: center; gap: 10px; }
   .pop-head .pk { font: 700 13px var(--mono); padding: 2px 8px; border-radius: 6px; background: var(--sunken);
                   border: 1px solid var(--line-strong); border-bottom-width: 3px; }
@@ -303,10 +310,25 @@
     .float, .kb.wave .key3d, .cap .cc.flash { animation: none !important; }
     .pop { transition-duration: .01s !important; }
   }
+  @media (max-height: 640px) {
+    .topbar-inner { padding-top: 7px; padding-bottom: 7px; }
+    .brand p { display: none; }
+    main { padding-top: 8px; padding-bottom: 8px; }
+    .hint { top: 10px; }
+    .dock { bottom: 10px; }
+    #notice { top: 56px; }
+    /* 键帽旁的卡片排紧凑一点，矮窗口里更容易放在键帽下方 */
+    .pop { padding: 10px; gap: 8px; }
+    .rec { height: 36px; }
+    .mods button, .media-grid button { height: 28px; }
+    .media-grid { gap: 5px; }
+    select, input[type=text] { height: 30px; }
+  }
+  @media (max-height: 520px) { .hint { display: none; } }
   @media (max-width: 760px) {
     .topbar-inner { padding-left: 16px; padding-right: 16px; }
     main { padding: 10px 10px 12px; }
-    .stage { min-height: 600px; border-radius: 14px; }
+    .stage { border-radius: 14px; }
     .hint { display: none; }
     /* 模型缩得很小时，外壳上的圆钮 / 开关按设计尺寸放大，保证手指点得到 */
     .deck { gap: 14px; padding-left: 0; }
@@ -361,7 +383,7 @@
       </div>
     </div>
 
-    <p class="hint">点<b>键帽</b>改键 · 点<b>屏幕上的名字</b>改预设名 · 左上角圆钮切换预设</p>
+    <p class="hint">点<b>键帽</b>改键 · 点<b>屏幕上的名字</b>改预设名 · 左上角圆钮切换预设（键盘同步切换）</p>
 
     <div class="intro" id="intro">
       <h2>连接键盘开始改键</h2>
@@ -391,8 +413,6 @@
     <div class="logpanel" id="logPanel" hidden><pre id="log"></pre></div>
 
     <div class="dock" id="dock">
-      <button id="btnUse" class="ghost" disabled>设为键盘当前预设</button>
-      <span class="sep"></span>
       <button id="btnExport" class="ghost">导出</button>
       <button id="btnImport" class="ghost">导入</button>
       <button id="btnReset" class="ghost danger" disabled>恢复出厂</button>
@@ -547,6 +567,8 @@ async function connect() {
     const parts = hello.split(/\s+/);
     presetCount = parseInt(parts[3], 10) || PRESET_COUNT_DEFAULT;
     currentOnDevice = parseInt(parts[5], 10);
+    // 连上后直接显示键盘正在用的那一组
+    if (currentOnDevice >= 0 && currentOnDevice < presetCount) active = currentOnDevice;
     await readFromDevice();
     notice("");
   } catch (e) {
@@ -726,17 +748,28 @@ async function resetDevice() {
   } finally { setBusy(false); }
 }
 
-async function useOnDevice() {
-  try {
-    await request("USE " + active, l => l === "@OK USE " + active ? true : undefined);
-    currentOnDevice = active;
+// 点外壳上的预设圆钮：页面切到这一组，连着键盘时键盘也同步切过去
+function selectPreset(i) {
+  if (!presets[i]) return;
+  if (i !== active) {
+    finishNameEdit();
+    active = i; selKey = -1; recording = -1;
     render();
-    if (!samePreset(presets[active], devicePresets[active])) {
-      notice("已切换到这组预设。注意：这组有改动还没写入，键盘上用的是写入前的版本。", "warn");
+  }
+  if (port && i !== currentOnDevice) useOnDevice(i);
+}
+
+async function useOnDevice(i) {
+  try {
+    await request("USE " + i, l => l === "@OK USE " + i ? true : undefined);
+    currentOnDevice = i;
+    render();
+    if (!samePreset(presets[i], devicePresets[i])) {
+      notice(`键盘已切换到预设 ${i + 1}。注意：这组有改动还没写入，键盘上用的是写入前的版本。`, "warn");
     } else {
-      notice("键盘已切换到这组预设。", "ok");
+      notice(`键盘已切换到预设 ${i + 1}。`, "ok");
     }
-  } catch (e) { notice(e.message, "err"); }
+  } catch (e) { notice("切换预设失败：" + e.message, "err"); }
 }
 
 // ====================================================================== 校验 / 显示文字
@@ -794,13 +827,13 @@ function setConnected(on) {
   $("statusText").textContent = on ? "已连接" : "未连接";
   $("btnConnect").textContent = on ? "断开" : "连接键盘";
   $("btnConnect").classList.toggle("primary", !on);
-  ["btnRead", "btnWrite", "btnUse", "btnReset"].forEach(id => $(id).disabled = !on);
+  ["btnRead", "btnWrite", "btnReset"].forEach(id => $(id).disabled = !on);
   if (!on) currentOnDevice = -1;
   render();
 }
 
 function setBusy(b) {
-  ["btnRead", "btnWrite", "btnUse", "btnReset", "btnConnect"].forEach(id => $(id).disabled = b || (id !== "btnConnect" && !port));
+  ["btnRead", "btnWrite", "btnReset", "btnConnect"].forEach(id => $(id).disabled = b || (id !== "btnConnect" && !port));
 }
 
 function updateWriteButton() {
@@ -832,7 +865,6 @@ function render() {
   renderBoard(p);
   renderPop();
   updateWriteButton();
-  $("btnUse").textContent = p && active === currentOnDevice ? "已是键盘当前预设" : "设为键盘当前预设";
 }
 
 // 只刷新"未写入"标记（打字时不重画整个模型）
@@ -854,12 +886,7 @@ function buildKeyboard() {
   const pads = el("div", "pads");
   for (let i = 0; i < PRESET_COUNT_DEFAULT; i++) {
     const b = el("button", "pad", i + 1);
-    b.onclick = () => {
-      if (!presets[i] || i === active) return;
-      finishNameEdit();
-      active = i; selKey = -1; recording = -1;
-      render();
-    };
+    b.onclick = () => selectPreset(i);
     pads.appendChild(b);
   }
   padsWrap.appendChild(pads);
@@ -976,9 +1003,13 @@ function updateOled() {
   d.textContent = `K${j + 1} ${p.keys[j].desc || "-"}`;
 }
 
+// 窄屏判断必须和 CSS 的 @media (max-width: 760px) 一致（按窗口宽度，不是舞台宽度）
+const NARROW_MQ = window.matchMedia("(max-width: 760px)");
+const isNarrow = () => NARROW_MQ.matches;
+
 // 选中某个键时，镜头往那个键稍微转一点
 function setFocusAngle(j) {
-  const narrow = $("stage").clientWidth <= 760;
+  const narrow = isNarrow();
   $("stage").style.setProperty("--fy", j >= 0 && !narrow ? `${(2 - j) * 3}deg` : "0deg");
 }
 
@@ -986,14 +1017,14 @@ function setFocusAngle(j) {
 function layoutStage() {
   const st = $("stage");
   const w = st.clientWidth, h = st.clientHeight;
-  const sEdit = Math.max(.36, Math.min(1.3, (w - 56) / (KB_W * 1.02), (h * .56) / KB_H));
+  const sEdit = Math.max(.36, Math.min(1.6, (w - 56) / (KB_W * 1.02), (h * .56) / KB_H));
   const sSel = Math.max(.36, Math.min(sEdit, (h * .34) / KB_H));
   const sHome = Math.max(.32, Math.min(.72, (w - 24) / (KB_W * 1.05), (h * .5) / 330));
   st.style.setProperty("--s-edit", sEdit.toFixed(3));
   st.style.setProperty("--s-home", sHome.toFixed(3));
   st.style.setProperty("--s-sel", sSel.toFixed(3));
   // 编辑视角：模型放在偏上的位置，给下方的小卡片留地方；窄屏卡片贴底，模型再往上一点
-  const narrow = w <= 760;
+  const narrow = isNarrow();
   st.style.setProperty("--ky-edit", Math.round(-h * (narrow ? .06 : .02)) + "px");
   st.style.setProperty("--ky-sel", Math.round(-h * (narrow ? .25 : .22)) + "px");
   st.style.setProperty("--ky-home", Math.round(-h * .1) + "px");
@@ -1193,7 +1224,7 @@ function placePop(decide = false) {
   const pop = $("pop");
   if (pop.hidden || selKey < 0) return;
   const st = $("stage");
-  if (st.clientWidth <= 760) { pop.style.transform = ""; return; }
+  if (isNarrow()) { pop.style.transform = ""; return; }
   // 键帽可见范围 = 顶面 + 前侧面（立体的厚度），卡片要放在整个键帽下方
   const key = $("board").querySelectorAll(".key3d")[selKey];
   const top = key.querySelector(".cap").getBoundingClientRect(), front = key.querySelector(".ks.f").getBoundingClientRect();
@@ -1203,14 +1234,28 @@ function placePop(decide = false) {
   const cx = cap.left + cap.width / 2 - sr.left;
   const left = Math.max(12, Math.min(sr.width - pw - 12, cx - pw / 2));
   const below = cap.bottom - sr.top + 16;
-  // 上下位置只在出现时决定一次，跟随过程中不来回翻
-  // 优先放下方（矮屏幕上可以盖住底部工具条），实在放不下才放上方
-  if (decide || !pop.dataset.side) pop.dataset.side = below + ph > sr.height - 12 ? "above" : "below";
-  const above = pop.dataset.side === "above";
-  const y = above ? Math.max(12, cap.top - sr.top - ph - 16) : Math.min(below, sr.height - ph - 12);
-  pop.classList.toggle("above", above);
+  // 位置只在出现时决定一次，跟随过程中不来回翻
+  // 优先放下方（矮屏幕上可以盖住底部工具条），其次上方；矮窗口上下都放不下时放到键帽侧面，免得盖住键帽
+  const spot = side => {
+    if (side === "below") return [left, Math.min(below, sr.height - ph - 12)];
+    if (side === "above") return [left, Math.max(12, cap.top - sr.top - ph - 16)];
+    const x = side === "right" ? cap.left + cap.width - sr.left + 16 : cap.left - sr.left - pw - 16;
+    return [Math.max(12, Math.min(sr.width - pw - 12, x)),
+            Math.max(12, Math.min(sr.height - ph - 12, (cap.top + cap.bottom) / 2 - sr.top - ph / 2))];
+  };
+  if (decide || !pop.dataset.side) {
+    // 依次试 下方 / 上方 / 右侧 / 左侧，取和键帽重叠最少的（相同则按这个顺序优先）
+    const cl = cap.left - sr.left, cr = cl + cap.width, ct = cap.top - sr.top, cb = cap.bottom - sr.top;
+    const overlap = ([x, y]) => Math.max(0, Math.min(cr, x + pw) - Math.max(cl, x)) * Math.max(0, Math.min(cb, y + ph) - Math.max(ct, y));
+    pop.dataset.side = ["below", "above", "right", "left"]
+      .map(s => [s, overlap(spot(s))]).reduce((a, b) => b[1] < a[1] ? b : a)[0];
+  }
+  const side = pop.dataset.side;
+  const [x, y] = spot(side);
+  pop.classList.toggle("above", side === "above");
+  pop.classList.toggle("beside", side === "left" || side === "right");
   pop.style.setProperty("--ax", Math.max(18, Math.min(pw - 18, cx - left)) + "px");
-  pop.style.transform = `translate(${Math.round(left)}px, ${Math.round(y)}px)`;
+  pop.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px)`;
 }
 
 // 镜头 / 键帽还在动画里时，连续几帧跟踪位置
@@ -1292,7 +1337,6 @@ $("btnRead").onclick = async () => {
   try { await readFromDevice(); notice("已从键盘读取。", "ok"); } catch (e) { notice(e.message, "err"); }
 };
 $("btnWrite").onclick = () => { finishNameEdit(); writeToDevice(); };
-$("btnUse").onclick = useOnDevice;
 $("btnReset").onclick = resetDevice;
 $("btnLog").onclick = () => {
   $("logPanel").hidden = !$("logPanel").hidden;
