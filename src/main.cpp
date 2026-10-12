@@ -145,14 +145,19 @@ void loop() {
     }
 
     // 断开后重启广播。
-    // NimBLE 断开后本来就会自动重新广播（advertiseOnDisconnect），这里是兜底；
-    // reAdvertise() 正在广播时什么也不做。不要再调 begin()，BLE 栈只能初始化一次。
+    // 断开回调里会直接重启广播，但那一刻协议栈可能还在收尾上一个连接，偶尔会失败；
+    // 失败了就再也搜不到键盘（电脑删掉配对后想重新添加时最容易碰到）。
+    // 所以每秒检查一次：没在广播、连接又没满，就重新广播。reAdvertise() 正在广播时什么也不做。
+    // 不要再调 begin()，BLE 栈只能初始化一次。
+    static uint32_t sLastAdvCheck = 0;
+    if (millis() - sLastAdvCheck >= 1000) {
+        sLastAdvCheck = millis();
+        sKeyboard.reAdvertise();
+    }
     if (!connected && sDisconnectedAt != 0 && (int32_t)(millis() - sDisconnectedAt) >= 0) {
         sDisconnectedAt = 0;
-        sKeyboard.reAdvertise();
         LED_EffectsSetLink(LED_LINK_ADVERTISING);
         SystemSetLink(LED_LINK_ADVERTISING);
-        usbLog::print("[ble] re-advertising\n");
     }
 
     // 4) 周期任务
