@@ -291,7 +291,8 @@ void BleKeyboard::startAdvertising(void)
 	bool slow = links > 0;
 	adv->setMinInterval(slow ? ADV_SLOW_MIN : ADV_FAST_MIN);
 	adv->setMaxInterval(slow ? ADV_SLOW_MAX : ADV_FAST_MAX);
-	adv->start();
+	// 在断开回调里调用时，协议栈可能还在收尾上一个连接，这时会失败；主循环的 reAdvertise() 会每秒重试
+	if (!adv->start()) blog("[ble] advertising start failed (links=%u), will retry\n", (unsigned)links);
 }
 
 
