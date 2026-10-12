@@ -11,11 +11,11 @@
     --accent: #1f7a6d; --accent-ink: #ffffff; --accent-soft: #e3f2ef; --accent-line: #a9d6cd;
     --warn: #c2700a; --warn-soft: #fef3c7; --err: #b42318; --err-soft: #fee4e2; --ok: #15803d;
     --case-hi: #f6f4ef; --case-lo: #e6e3dc; --case-edge: #d6d2c9;
-    --case-side: #d3cec4; --case-side-dk: #bdb8ad;
+    --case-side: #b3ac9f; --case-side-dk: #8e877a;
     --cap-hi: #fdfcf9; --cap-lo: #ebe8e1; --cap-edge: #d3cfc6; --cap-ink: #2b2a27; --cap-sub: #8f8b82;
     --cap-side: #dedad1; --cap-side-dk: #c9c4ba;
     --oled: #030506; --oled-ink: #dff6ff; --cable: #1c1d20;
-    --desk-hi: #ffffff; --desk-lo: #e9ecf0; --ground: rgba(20, 24, 33, .38);
+    --desk-hi: #ffffff; --desk-lo: #e9ecf0; --ground: rgba(20, 24, 33, .42); --contact: rgba(20, 24, 33, .45);
     --glass: rgba(255, 255, 255, .78);
     --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
     --shadow: 0 1px 2px rgba(16, 24, 40, .05);
@@ -31,7 +31,7 @@
       --case-side: #aaa59b; --case-side-dk: #8f8a80;
       --cap-hi: #e2dfd8; --cap-lo: #cfcbc3; --cap-edge: #a9a59c; --cap-ink: #23221f; --cap-sub: #77736b;
       --cap-side: #bab6ad; --cap-side-dk: #a29e95;
-      --desk-hi: #23272e; --desk-lo: #121418; --ground: rgba(0, 0, 0, .7);
+      --desk-hi: #23272e; --desk-lo: #121418; --ground: rgba(0, 0, 0, .7); --contact: rgba(0, 0, 0, .8);
       --glass: rgba(27, 30, 35, .82);
       --shadow: none; --pop-shadow: 0 18px 40px rgba(0, 0, 0, .55);
     }
@@ -111,26 +111,35 @@
                        margin: -150px 0 0 -450px; transform-style: preserve-3d; }
   .tilt  { transform: rotateX(var(--px, 0deg)) rotateY(calc(var(--py, 0deg) + var(--fy, 0deg)));
            transition: transform .6s ease-out; }
-  .float { animation: bob 6s ease-in-out infinite; }
+  /* 悬浮动画只在首页跑。编辑视角下哪怕幅度为 0，只要动画还在跑，浏览器就会把整块 3D 内容
+     固定在动画开始时（首页小尺寸）的分辨率上不再重绘：模型放大后发糊，部分键帽甚至不显示 */
+  [data-view=home] .float { animation: bob 6s ease-in-out infinite; }
   @keyframes bob { 50% { transform: translateY(var(--bob, 0px)); } }
-  .kb { --T: 46px; --kh: 30px;
-        transform: translateY(var(--ky, 0px)) rotateX(var(--rx)) rotateZ(var(--rz)) scale(var(--s));
+  /* 清晰度：模型按 900x300 设计尺寸画。如果直接 scale(2) 放大，浏览器常常先按小尺寸光栅化再拉伸，
+     文字和边缘会糊。所以先用 zoom 把模型按最终尺寸（--kz）重新排版、按真实分辨率绘制，
+     transform 里只再做 ≤1 的缩小（首页、选中键时的镜头），缩小不会糊。 */
+  .kb { --T: 46px; --kh: 30px; zoom: var(--kz, 1);
+        transform: translateY(var(--ky, 0px)) rotateX(var(--rx)) rotateZ(var(--rz)) scale3d(var(--r), var(--r), var(--r));
+        --r: calc(var(--s) / var(--kz, 1));   /* scale3d：厚度（Z）也跟着缩放，不同屏幕上薄厚比例一致 */
         transition: transform .95s cubic-bezier(.65, 0, .25, 1); }
   [data-view=home] .kb    { --rx: 58deg; --rz: -24deg; --s: var(--s-home, .6); --ky: var(--ky-home, -60px); }
   [data-view=home] .float { --bob: -14px; }
   [data-view=edit] .kb    { --rx: 33deg; --rz: 0deg;   --s: var(--s-edit, 1); --ky: var(--ky-edit, 0px); }
   [data-view=edit][data-sel] .kb { --rx: 37deg; --s: var(--s-sel, .9); --ky: var(--ky-sel, -80px); }
 
-  .ground { position: absolute; inset: 4% 2%; border-radius: 40px; background: var(--ground); filter: blur(26px);
+  .ground { position: absolute; inset: -2% -2% -9%; border-radius: 40px; background: var(--ground); filter: blur(30px);
             transform: translateZ(-2px); }
-  .side, .ks { backface-visibility: hidden; }
-  .side { position: absolute; background: linear-gradient(var(--case-side), var(--case-side-dk)); }
-  .side.f { left: 10px; right: 10px; top: 100%; height: var(--T); transform-origin: top;    transform: rotateX(90deg) rotateY(180deg); }
-  .side.b { left: 10px; right: 10px; bottom: 100%; height: var(--T); transform-origin: bottom; transform: rotateX(-90deg) rotateY(180deg); }
-  .side.r { top: 10px; bottom: 10px; left: 100%; width: var(--T); transform-origin: left;  transform: rotateY(-90deg) rotateX(180deg);
-            background: linear-gradient(90deg, var(--case-side), var(--case-side-dk)); }
-  .side.l { top: 10px; bottom: 10px; right: 100%; width: var(--T); transform-origin: right; transform: rotateY(90deg) rotateX(180deg);
-            background: linear-gradient(-90deg, var(--case-side), var(--case-side-dk)); }
+  /* 接触阴影：紧贴外壳底边的一圈深色，让外壳和桌面分开 */
+  .ground::after { content: ""; position: absolute; inset: 2% 1.6% 8%; border-radius: 22px; background: var(--contact);
+                   filter: blur(7px); }
+  .ks { backface-visibility: hidden; }
+  /* 外壳侧面：4 条长边 + 4 个圆角（每个圆角用 4 个窄面拼成弧），和顶面的 14px 圆角对齐，拐角连续不露缝。
+     每个面只有「边长 x 厚度」那么大，显存占用很小（之前用一叠整板大小的薄片，大屏上会把显存吃光：
+     浏览器换成低清贴图发糊，甚至丢掉部分图层导致键帽消失）。面由 JS 按 --T 生成。 */
+  .slab { position: absolute; inset: 0; transform-style: preserve-3d; }
+  .slab b { position: absolute; backface-visibility: hidden;
+            background: linear-gradient(var(--case-side), var(--case-side-dk));
+            box-shadow: inset 0 1px 0 rgba(255,255,255,.45), inset 0 -2px 0 rgba(0,0,0,.28); }
   .cable { position: absolute; left: 7%; bottom: calc(100% - 4px); width: 46px; height: 170px;
            transform: translateZ(calc(var(--T) * .5)); }
   .cable::before { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 30px; border-radius: 5px 5px 2px 2px;
@@ -375,7 +384,7 @@
         <div class="float">
           <div class="kb" id="kb">
             <div class="ground"></div>
-            <div class="side f"></div><div class="side b"></div><div class="side l"></div><div class="side r"></div>
+            <div class="slab" id="slab"></div>
             <div class="cable"></div>
             <div id="board"></div>
           </div>
@@ -876,6 +885,30 @@ function renderTabsOnly() {
 // ====================================================================== 3D 模型
 // 模型只建一次：元素一直在，选中 / 按下 / 切换才有过渡动画
 function buildKeyboard() {
+  // 外壳侧面：沿顶面轮廓（900x300，圆角 14）摆一圈竖直的面。
+  // 每个面先 rotateX(-90deg) 立起来（朝前），再 rotateZ 转到外法线方向 θ，最后抬高半个厚度
+  const slab = $("slab");
+  slab.innerHTML = "";
+  const T = parseFloat(getComputedStyle($("kb")).getPropertyValue("--T")) || 46;
+  const R = 14, ARC = 4;   // 圆角半径、每个圆角拆成几个面
+  const face = (x, y, w, deg) => {
+    const f = el("b");
+    f.style.cssText = `left:${(x - w / 2).toFixed(2)}px; top:${(y - T / 2).toFixed(2)}px; width:${w.toFixed(2)}px; height:${T}px;` +
+      `transform: translateZ(${T / 2}px) rotateZ(${deg - 90}deg) rotateX(-90deg);`;
+    slab.appendChild(f);
+  };
+  face(KB_W / 2, KB_H, KB_W - 2 * R, 90);     // 前
+  face(KB_W / 2, 0, KB_W - 2 * R, 270);       // 后
+  face(KB_W, KB_H / 2, KB_H - 2 * R, 0);      // 右
+  face(0, KB_H / 2, KB_H - 2 * R, 180);       // 左
+  const step = 90 / ARC, chord = 2 * R * Math.sin(step / 2 * Math.PI / 180) + 1;   // +1 盖住面与面之间的细缝
+  for (const [cx, cy, a0] of [[KB_W - R, KB_H - R, 0], [R, KB_H - R, 90], [R, R, 180], [KB_W - R, R, 270]]) {
+    for (let i = 0; i < ARC; i++) {
+      const deg = a0 + (i + .5) * step, rad = deg * Math.PI / 180, d = R * Math.cos(step / 2 * Math.PI / 180);
+      face(cx + d * Math.cos(rad), cy + d * Math.sin(rad), chord, deg);
+    }
+  }
+
   const board = $("board");
   board.innerHTML = "";
 
@@ -1014,6 +1047,10 @@ function setFocusAngle(j) {
 }
 
 // 按舞台尺寸算模型缩放和位置
+let SUPERSAMPLE = 1.5;
+// 模型光栅化后的最大宽度（物理像素）。超过显卡纹理上限（常见 4096）时浏览器会整层丢掉不画，
+// 表现为顶面或键帽消失；1.2 是阴影等伸出模型外的余量
+const MAX_RASTER_PX = 3600;
 function layoutStage() {
   const st = $("stage");
   const w = st.clientWidth, h = st.clientHeight;
@@ -1024,11 +1061,19 @@ function layoutStage() {
   st.style.setProperty("--s-edit", sEdit.toFixed(3));
   st.style.setProperty("--s-home", sHome.toFixed(3));
   st.style.setProperty("--s-sel", sSel.toFixed(3));
+  // zoom 取三种视角里最大的缩放再乘超采样系数，transform 里只剩 <1 的缩小。
+  // 超采样：模型往后倾斜，上半部分被透视压扁后要重新采样，按更高分辨率画再缩小会清楚很多
+  const sMax = Math.max(sEdit, sSel, sHome);
+  const kzCap = MAX_RASTER_PX / (KB_W * 1.2 * (window.devicePixelRatio || 1));
+  const kz = Math.max(Math.min(sMax * SUPERSAMPLE, kzCap), Math.min(sMax, 1));
+  st.style.setProperty("--kz", kz.toFixed(3));
   // 编辑视角：模型放在偏上的位置，给下方的小卡片留地方；窄屏卡片贴底，模型再往上一点
   const narrow = isNarrow();
-  st.style.setProperty("--ky-edit", Math.round(-h * (narrow ? .06 : .02)) + "px");
-  st.style.setProperty("--ky-sel", Math.round(-h * (narrow ? .25 : .22)) + "px");
-  st.style.setProperty("--ky-home", Math.round(-h * .1) + "px");
+  // zoom 也会放大 .kb 自己 transform 里的 px 位移，这里先除掉
+  const ky = f => (-h * f / kz).toFixed(1) + "px";
+  st.style.setProperty("--ky-edit", ky(narrow ? .06 : .02));
+  st.style.setProperty("--ky-sel", ky(narrow ? .25 : .22));
+  st.style.setProperty("--ky-home", ky(.1));
   placePop();
 }
 
