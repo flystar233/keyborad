@@ -19,13 +19,11 @@ public:
     Ws2812(uint8_t pin, uint16_t count, rmt_channel_t channel = RMT_CHANNEL_0);
 
     bool begin();          // 配置 RMT 并安装驱动、分配缓冲区
-    void end();            // 释放 RMT 通道并交还引脚
 
     bool  ready() const { return _begun && _items != nullptr; }
     uint16_t count() const { return _count; }
 
     void    setBrightness(uint8_t b) { _brightness = b; }
-    uint8_t brightness() const { return _brightness; }
 
     void setPixel(uint16_t i, uint8_t r, uint8_t g, uint8_t b);
     void setAll(uint8_t r, uint8_t g, uint8_t b);

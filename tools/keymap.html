@@ -11,11 +11,11 @@
     --accent: #1f7a6d; --accent-ink: #ffffff; --accent-soft: #e3f2ef; --accent-line: #a9d6cd;
     --warn: #c2700a; --warn-soft: #fef3c7; --err: #b42318; --err-soft: #fee4e2; --ok: #15803d;
     --case-hi: #f6f4ef; --case-lo: #e6e3dc; --case-edge: #d6d2c9;
-    --case-side: #d3cec4; --case-side-dk: #bdb8ad;
+    --case-side: #b3ac9f; --case-side-dk: #8e877a;
     --cap-hi: #fdfcf9; --cap-lo: #ebe8e1; --cap-edge: #d3cfc6; --cap-ink: #2b2a27; --cap-sub: #8f8b82;
     --cap-side: #dedad1; --cap-side-dk: #c9c4ba;
     --oled: #030506; --oled-ink: #dff6ff; --cable: #1c1d20;
-    --desk-hi: #ffffff; --desk-lo: #e9ecf0; --ground: rgba(20, 24, 33, .38);
+    --desk-hi: #ffffff; --desk-lo: #e9ecf0; --ground: rgba(20, 24, 33, .42); --contact: rgba(20, 24, 33, .45);
     --glass: rgba(255, 255, 255, .78);
     --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
     --shadow: 0 1px 2px rgba(16, 24, 40, .05);
@@ -31,7 +31,7 @@
       --case-side: #aaa59b; --case-side-dk: #8f8a80;
       --cap-hi: #e2dfd8; --cap-lo: #cfcbc3; --cap-edge: #a9a59c; --cap-ink: #23221f; --cap-sub: #77736b;
       --cap-side: #bab6ad; --cap-side-dk: #a29e95;
-      --desk-hi: #23272e; --desk-lo: #121418; --ground: rgba(0, 0, 0, .7);
+      --desk-hi: #23272e; --desk-lo: #121418; --ground: rgba(0, 0, 0, .7); --contact: rgba(0, 0, 0, .8);
       --glass: rgba(27, 30, 35, .82);
       --shadow: none; --pop-shadow: 0 18px 40px rgba(0, 0, 0, .55);
     }
@@ -111,26 +111,35 @@
                        margin: -150px 0 0 -450px; transform-style: preserve-3d; }
   .tilt  { transform: rotateX(var(--px, 0deg)) rotateY(calc(var(--py, 0deg) + var(--fy, 0deg)));
            transition: transform .6s ease-out; }
-  .float { animation: bob 6s ease-in-out infinite; }
+  /* 悬浮动画只在首页跑。编辑视角下哪怕幅度为 0，只要动画还在跑，浏览器就会把整块 3D 内容
+     固定在动画开始时（首页小尺寸）的分辨率上不再重绘：模型放大后发糊，部分键帽甚至不显示 */
+  [data-view=home] .float { animation: bob 6s ease-in-out infinite; }
   @keyframes bob { 50% { transform: translateY(var(--bob, 0px)); } }
-  .kb { --T: 46px; --kh: 30px;
-        transform: translateY(var(--ky, 0px)) rotateX(var(--rx)) rotateZ(var(--rz)) scale(var(--s));
+  /* 清晰度：模型按 900x300 设计尺寸画。如果直接 scale(2) 放大，浏览器常常先按小尺寸光栅化再拉伸，
+     文字和边缘会糊。所以先用 zoom 把模型按最终尺寸（--kz）重新排版、按真实分辨率绘制，
+     transform 里只再做 ≤1 的缩小（首页、选中键时的镜头），缩小不会糊。 */
+  .kb { --T: 46px; --kh: 30px; zoom: var(--kz, 1);
+        transform: translateY(var(--ky, 0px)) rotateX(var(--rx)) rotateZ(var(--rz)) scale3d(var(--r), var(--r), var(--r));
+        --r: calc(var(--s) / var(--kz, 1));   /* scale3d：厚度（Z）也跟着缩放，不同屏幕上薄厚比例一致 */
         transition: transform .95s cubic-bezier(.65, 0, .25, 1); }
   [data-view=home] .kb    { --rx: 58deg; --rz: -24deg; --s: var(--s-home, .6); --ky: var(--ky-home, -60px); }
   [data-view=home] .float { --bob: -14px; }
   [data-view=edit] .kb    { --rx: 33deg; --rz: 0deg;   --s: var(--s-edit, 1); --ky: var(--ky-edit, 0px); }
   [data-view=edit][data-sel] .kb { --rx: 37deg; --s: var(--s-sel, .9); --ky: var(--ky-sel, -80px); }
 
-  .ground { position: absolute; inset: 4% 2%; border-radius: 40px; background: var(--ground); filter: blur(26px);
+  .ground { position: absolute; inset: -2% -2% -9%; border-radius: 40px; background: var(--ground); filter: blur(30px);
             transform: translateZ(-2px); }
-  .side, .ks { backface-visibility: hidden; }
-  .side { position: absolute; background: linear-gradient(var(--case-side), var(--case-side-dk)); }
-  .side.f { left: 10px; right: 10px; top: 100%; height: var(--T); transform-origin: top;    transform: rotateX(90deg) rotateY(180deg); }
-  .side.b { left: 10px; right: 10px; bottom: 100%; height: var(--T); transform-origin: bottom; transform: rotateX(-90deg) rotateY(180deg); }
-  .side.r { top: 10px; bottom: 10px; left: 100%; width: var(--T); transform-origin: left;  transform: rotateY(-90deg) rotateX(180deg);
-            background: linear-gradient(90deg, var(--case-side), var(--case-side-dk)); }
-  .side.l { top: 10px; bottom: 10px; right: 100%; width: var(--T); transform-origin: right; transform: rotateY(90deg) rotateX(180deg);
-            background: linear-gradient(-90deg, var(--case-side), var(--case-side-dk)); }
+  /* 接触阴影：紧贴外壳底边的一圈深色，让外壳和桌面分开 */
+  .ground::after { content: ""; position: absolute; inset: 2% 1.6% 8%; border-radius: 22px; background: var(--contact);
+                   filter: blur(7px); }
+  .ks { backface-visibility: hidden; }
+  /* 外壳侧面：4 条长边 + 4 个圆角（每个圆角用 4 个窄面拼成弧），和顶面的 14px 圆角对齐，拐角连续不露缝。
+     每个面只有「边长 x 厚度」那么大，显存占用很小（之前用一叠整板大小的薄片，大屏上会把显存吃光：
+     浏览器换成低清贴图发糊，甚至丢掉部分图层导致键帽消失）。面由 JS 按 --T 生成。 */
+  .slab { position: absolute; inset: 0; transform-style: preserve-3d; }
+  .slab b { position: absolute; backface-visibility: hidden;
+            background: linear-gradient(var(--case-side), var(--case-side-dk));
+            box-shadow: inset 0 1px 0 rgba(255,255,255,.45), inset 0 -2px 0 rgba(0,0,0,.28); }
   .cable { position: absolute; left: 7%; bottom: calc(100% - 4px); width: 46px; height: 170px;
            transform: translateZ(calc(var(--T) * .5)); }
   .cable::before { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 30px; border-radius: 5px 5px 2px 2px;
@@ -292,9 +301,6 @@
            border: 1px solid var(--line-strong); border-radius: 8px; padding: 0 8px; }
   select:focus, input[type=text]:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: var(--accent); }
   input.bad { border-color: var(--err); background: var(--err-soft); }
-  .pdesc { display: grid; gap: 4px; font-size: 12px; color: var(--muted); }
-  .pdesc .lbl { display: flex; justify-content: space-between; }
-  .count { font-family: var(--mono); font-size: 11px; color: var(--faint); }
   .pop.media { width: 430px; }
   .media-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
   .media-grid button { height: 32px; padding: 0 4px; font-size: 13px; }
@@ -361,7 +367,8 @@
     <div class="toolbar">
       <button id="btnRead" disabled>从键盘读取</button>
       <button id="btnWrite" class="primary" disabled>写入键盘</button>
-      <button id="btnConnect" class="primary">连接键盘</button>
+      <button id="btnBle" class="primary" title="通过蓝牙连接（键盘要先和这台电脑 / 手机配对过）">蓝牙连接</button>
+      <button id="btnConnect" class="primary" title="通过 USB 线连接">USB 连接</button>
     </div>
   </div>
 </header>
@@ -375,7 +382,7 @@
         <div class="float">
           <div class="kb" id="kb">
             <div class="ground"></div>
-            <div class="side f"></div><div class="side b"></div><div class="side l"></div><div class="side r"></div>
+            <div class="slab" id="slab"></div>
             <div class="cable"></div>
             <div id="board"></div>
           </div>
@@ -387,7 +394,7 @@
 
     <div class="intro" id="intro">
       <h2>连接键盘开始改键</h2>
-      <p>页面通过 Web Serial 读写键盘上的 5 组预设，写入后保存在键盘里，断电不丢。需要电脑版 Chrome 或 Edge。</p>
+      <p>插 USB 线点「USB 连接」，或者点「蓝牙连接」无线改键（键盘要先配对过）。读写键盘上的 5 组预设，写入后保存在键盘里，断电不丢。需要 Chrome 或 Edge。</p>
     </div>
 
     <div class="pop" id="pop" hidden>
@@ -404,10 +411,6 @@
         </div>
       </div>
       <div class="media-grid" id="popMedia"></div>
-      <label class="pdesc">
-        <span class="lbl"><span>屏幕显示</span><span class="count" id="popCount"></span></span>
-        <input type="text" id="popDesc" placeholder="例如 Ctrl+C">
-      </label>
     </div>
 
     <div class="logpanel" id="logPanel" hidden><pre id="log"></pre></div>
@@ -482,7 +485,7 @@ const CODE_TO_HID = (() => {
   return m;
 })();
 
-// 媒体键：16 位位图，与固件 Hid2Ble.cpp 的 Consumer 报告描述符顺序一致
+// 媒体键：16 位位图，与固件 BleKeyboard.cpp 的 Consumer 报告描述符顺序一致
 const MEDIA = [
   [0x0000, "（无）", ""],
   [0x0020, "音量 +", "Volume +"], [0x0040, "音量 −", "Volume -"], [0x0010, "静音", "Mute"],
@@ -494,8 +497,19 @@ const MEDIA = [
 const MEDIA_BY_CODE = new Map(MEDIA.map(m => [m[0], m]));
 
 // ====================================================================== 状态
-let port = null, reader = null, writer = null, readDone = null;
-let presets = [];          // [{ name, media, keys: [{ mod, k1, k2, media, desc, descAuto }] }]
+let port = null, reader = null, writer = null, readDone = null;   // USB（Web Serial）
+let link = null;          // 当前连接方式："usb" / "bridge"（电脑上经本机蓝牙桥）/ "ble"（手机 Web Bluetooth），null = 未连接
+// 电脑上的"蓝牙连接"走本机蓝牙桥（tools/claude_status.py --ble-bridge）：Windows 上浏览器的 Web Bluetooth
+// 连不上被系统当成 HID 键盘的设备（强制重新查询服务会失败），而蓝牙桥用系统缓存的服务表可以正常收发。
+const BRIDGE = "http://127.0.0.1:47815";
+const IS_ANDROID = /Android/i.test(navigator.userAgent);
+let bridgePoll = 0;
+let bleDev = null, bleRx = null;                                   // 蓝牙（Web Bluetooth，NUS 蓝牙串口）
+const BLE_NAME    = "ESP32-C3 Keybrick";
+const NUS_SERVICE = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
+const NUS_RX      = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";   // 网页 -> 键盘
+const NUS_TX      = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";   // 键盘 -> 网页
+let presets = [];          // [{ name, media, keys: [{ mod, k1, k2, media, desc }] }]
 let devicePresets = [];    // 最近一次从键盘读到 / 写入的版本，用来判断"未写入"
 let presetCount = PRESET_COUNT_DEFAULT;
 let currentOnDevice = -1;
@@ -533,9 +547,9 @@ let rxBuf = "";
 let waiter = null;
 let queue = Promise.resolve();
 
-async function connect() {
+async function connectUsb() {
   if (!("serial" in navigator)) {
-    notice("这个浏览器不支持 Web Serial。请用电脑版 Chrome 或 Edge 打开本页面。", "err");
+    notice("这个浏览器不支持 Web Serial（USB 连接）。请用电脑版 Chrome 或 Edge，或者改用蓝牙连接。", "err");
     return;
   }
   try {
@@ -554,9 +568,98 @@ async function connect() {
   try { await port.setSignals({ dataTerminalReady: false, requestToSend: false }); } catch (e) {}
 
   writer = port.writable.getWriter();
+  rxBuf = "";
   readDone = readLoop();
-  setConnected(true);
+  link = "usb";
+  await afterLink();
+}
 
+// ---- 连接：蓝牙（NUS 蓝牙串口，协议和 USB 完全一样）
+async function bridgeStatus() {
+  try {
+    const r = await fetch(BRIDGE + "/status", { cache: "no-store", signal: AbortSignal.timeout(1500) });
+    return await r.json();
+  } catch (e) {
+    return null;
+  }
+}
+
+async function connectBle() {
+  if (!IS_ANDROID) return connectBridge();
+  return connectWebBluetooth();
+}
+
+// 电脑：经本机蓝牙桥
+async function connectBridge() {
+  const st = await bridgeStatus();
+  if (!st) {
+    notice("电脑上走蓝牙需要先启动蓝牙桥：在终端运行  python tools/claude_status.py --ble-bridge （需要 pip install bleak）。" +
+           "装了 Claude Code 状态推送的话，没插线时它会自动启动。插着 USB 线时直接点「USB 连接」更简单。", "err");
+    return;
+  }
+  if (!st.connected) {
+    notice("蓝牙桥已经启动，但还没连上键盘（刚启动要几秒）。确认键盘开着、已经和这台电脑配对，稍等再点一次。", "warn");
+    return;
+  }
+  rxBuf = "";
+  link = "bridge";
+  bridgePoll = setInterval(async () => {
+    if (link !== "bridge") return;
+    const s2 = await bridgeStatus();
+    if (!s2 || !s2.connected) onBleLost();
+  }, 3000);
+  await afterLink();
+}
+
+// 安卓手机：浏览器自带的 Web Bluetooth
+async function connectWebBluetooth() {
+  if (!navigator.bluetooth) {
+    notice("这个浏览器不支持 Web Bluetooth。请用 Chrome 或 Edge（电脑或安卓手机），或者改用 USB 连接。", "err");
+    return;
+  }
+  let dev;
+  try {
+    // 只按名字过滤：HID 服务（0x1812）在 Web Bluetooth 的屏蔽名单里，不能拿来过滤
+    dev = await navigator.bluetooth.requestDevice({ filters: [{ name: BLE_NAME }], optionalServices: [NUS_SERVICE] });
+  } catch (e) {
+    return;   // 用户取消了选择
+  }
+  $("btnBle").classList.add("busy");
+  $("btnBle").disabled = true;
+  try {
+    const server = await dev.gatt.connect();
+    const svc = await server.getPrimaryService(NUS_SERVICE);
+    bleRx = await svc.getCharacteristic(NUS_RX);
+    const tx = await svc.getCharacteristic(NUS_TX);
+    const decoder = new TextDecoder();
+    tx.addEventListener("characteristicvaluechanged", e => feedRx(decoder.decode(e.target.value, { stream: true })));
+    await tx.startNotifications();
+    dev.addEventListener("gattserverdisconnected", onBleLost);
+    bleDev = dev;
+  } catch (e) {
+    try { dev.gatt.disconnect(); } catch (e2) {}
+    bleRx = null;
+    notice("蓝牙连接失败：" + e.message + "。确认键盘已经和这台设备配对过、并且固件支持蓝牙串口（NUS）。", "err");
+    return;
+  } finally {
+    $("btnBle").classList.remove("busy");
+    $("btnBle").disabled = false;
+  }
+  rxBuf = "";
+  link = "ble";
+  await afterLink();
+}
+
+async function onBleLost() {
+  if (link !== "ble" && link !== "bridge") return;
+  const n = dirtyCount();
+  await disconnect();
+  notice(n ? `蓝牙已断开，${n} 组还没写入的改动已丢失。` : "蓝牙已断开。", "warn");
+}
+
+// 连上之后（USB / 蓝牙共用）：握手、读预设
+async function afterLink() {
+  setConnected(true);
   try {
     let hello = null;
     for (let i = 0; i < 3 && !hello; i++) {
@@ -583,6 +686,13 @@ async function disconnect() {
   try { if (writer) { writer.releaseLock(); } } catch (e) {}
   try { if (port) await port.close(); } catch (e) {}
   port = reader = writer = null;
+  if (bleDev) {
+    bleDev.removeEventListener("gattserverdisconnected", onBleLost);
+    try { bleDev.gatt.disconnect(); } catch (e) {}
+  }
+  bleDev = bleRx = null;
+  clearInterval(bridgePoll);
+  link = null;
   // 断开后回到首页：页面上的预设只是键盘数据的副本，不清掉会让人以为还连着
   presets = []; devicePresets = [];
   active = 0; selKey = -1; recording = -1;
@@ -597,19 +707,24 @@ async function readLoop() {
     for (;;) {
       const { value, done } = await reader.read();
       if (done) break;
-      rxBuf += value;
-      let nl;
-      while ((nl = rxBuf.indexOf("\n")) >= 0) {
-        const line = rxBuf.slice(0, nl).replace(/\r$/, "");
-        rxBuf = rxBuf.slice(nl + 1);
-        onLine(line);
-      }
+      feedRx(value);
     }
   } catch (e) {
     log("读取出错：" + e.message);
   } finally {
     reader.releaseLock();
     await closed;
+  }
+}
+
+// 收到的文本拼成行（USB 和蓝牙都走这里）
+function feedRx(text) {
+  rxBuf += text;
+  let nl;
+  while ((nl = rxBuf.indexOf("\n")) >= 0) {
+    const line = rxBuf.slice(0, nl).replace(/\r$/, "");
+    rxBuf = rxBuf.slice(nl + 1);
+    onLine(line);
   }
 }
 
@@ -621,7 +736,17 @@ function onLine(line) {
 
 async function sendLine(text) {
   log(text, "tx");
-  await writer.write(new TextEncoder().encode(text + "\n"));
+  const data = new TextEncoder().encode(text + "\n");
+  if (link === "bridge") {
+    // 蓝牙桥一次返回这条命令的全部回复（比如 @GET 的 5 行 + @END），直接按行喂进去
+    const r = await fetch(BRIDGE + "/cmd", { method: "POST", body: text, signal: AbortSignal.timeout(8000) });
+    feedRx((await r.text()) + "\n");
+  } else if (link === "ble") {
+    // 一次写入别超过 MTU（Windows / 安卓一般协商到 247 以上），按 180 字节分包、逐包等确认
+    for (let i = 0; i < data.length; i += 180) await bleRx.writeValueWithResponse(data.slice(i, i + 180));
+  } else {
+    await writer.write(data);
+  }
 }
 
 // 发一条命令，handler 对每行 '@' 回复返回 undefined 表示继续等，返回其它值表示完成
@@ -663,7 +788,7 @@ function parsePresetLine(line) {
     keys.push({
       mod: media ? 0 : b[0], k1: media ? 0 : b[2], k2: media ? 0 : b[3],
       media: media ? (b[0] | (b[1] << 8)) : 0,
-      desc: hexToStr(t[5 + k]), descAuto: false,
+      desc: hexToStr(t[5 + k]),
     });
   }
   return { index: parseInt(t[1], 10), preset: { name: hexToStr(t[4]), media, keys } };
@@ -680,13 +805,7 @@ function presetToCommand(i, p) {
 }
 
 const clone = o => JSON.parse(JSON.stringify(o));
-const samePreset = (a, b) => JSON.stringify(stripAuto(a)) === JSON.stringify(stripAuto(b));
-function stripAuto(p) {
-  if (!p) return p;
-  const c = clone(p);
-  c.keys.forEach(k => delete k.descAuto);
-  return c;
-}
+const samePreset = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
 // ====================================================================== 与键盘交互
 async function readFromDevice() {
@@ -756,7 +875,7 @@ function selectPreset(i) {
     active = i; selKey = -1; recording = -1;
     render();
   }
-  if (port && i !== currentOnDevice) useOnDevice(i);
+  if (link && i !== currentOnDevice) useOnDevice(i);
 }
 
 async function useOnDevice(i) {
@@ -824,16 +943,17 @@ const dirtyCount = () => presets.filter((p, i) => !samePreset(p, devicePresets[i
 
 function setConnected(on) {
   $("dot").classList.toggle("on", on);
-  $("statusText").textContent = on ? "已连接" : "未连接";
-  $("btnConnect").textContent = on ? "断开" : "连接键盘";
+  $("statusText").textContent = on ? (link === "usb" ? "已连接（USB）" : "已连接（蓝牙）") : "未连接";
+  $("btnConnect").textContent = on ? "断开" : "USB 连接";
   $("btnConnect").classList.toggle("primary", !on);
+  $("btnBle").hidden = on;
   ["btnRead", "btnWrite", "btnReset"].forEach(id => $(id).disabled = !on);
   if (!on) currentOnDevice = -1;
   render();
 }
 
 function setBusy(b) {
-  ["btnRead", "btnWrite", "btnReset", "btnConnect"].forEach(id => $(id).disabled = b || (id !== "btnConnect" && !port));
+  ["btnRead", "btnWrite", "btnReset", "btnConnect"].forEach(id => $(id).disabled = b || (id !== "btnConnect" && !link));
 }
 
 function updateWriteButton() {
@@ -876,6 +996,30 @@ function renderTabsOnly() {
 // ====================================================================== 3D 模型
 // 模型只建一次：元素一直在，选中 / 按下 / 切换才有过渡动画
 function buildKeyboard() {
+  // 外壳侧面：沿顶面轮廓（900x300，圆角 14）摆一圈竖直的面。
+  // 每个面先 rotateX(-90deg) 立起来（朝前），再 rotateZ 转到外法线方向 θ，最后抬高半个厚度
+  const slab = $("slab");
+  slab.innerHTML = "";
+  const T = parseFloat(getComputedStyle($("kb")).getPropertyValue("--T")) || 46;
+  const R = 14, ARC = 4;   // 圆角半径、每个圆角拆成几个面
+  const face = (x, y, w, deg) => {
+    const f = el("b");
+    f.style.cssText = `left:${(x - w / 2).toFixed(2)}px; top:${(y - T / 2).toFixed(2)}px; width:${w.toFixed(2)}px; height:${T}px;` +
+      `transform: translateZ(${T / 2}px) rotateZ(${deg - 90}deg) rotateX(-90deg);`;
+    slab.appendChild(f);
+  };
+  face(KB_W / 2, KB_H, KB_W - 2 * R, 90);     // 前
+  face(KB_W / 2, 0, KB_W - 2 * R, 270);       // 后
+  face(KB_W, KB_H / 2, KB_H - 2 * R, 0);      // 右
+  face(0, KB_H / 2, KB_H - 2 * R, 180);       // 左
+  const step = 90 / ARC, chord = 2 * R * Math.sin(step / 2 * Math.PI / 180) + 1;   // +1 盖住面与面之间的细缝
+  for (const [cx, cy, a0] of [[KB_W - R, KB_H - R, 0], [R, KB_H - R, 90], [R, R, 180], [KB_W - R, R, 270]]) {
+    for (let i = 0; i < ARC; i++) {
+      const deg = a0 + (i + .5) * step, rad = deg * Math.PI / 180, d = R * Math.cos(step / 2 * Math.PI / 180);
+      face(cx + d * Math.cos(rad), cy + d * Math.sin(rad), chord, deg);
+    }
+  }
+
   const board = $("board");
   board.innerHTML = "";
 
@@ -945,7 +1089,7 @@ function renderBoard(p) {
     board.querySelector(".oname").textContent = "Keybrick";
     const d = board.querySelector(".odesc");
     d.innerHTML = "";
-    d.append(port ? "reading" : "connect USB", el("span", "blink", "_"));
+    d.append(link ? "reading" : "connect", el("span", "blink", "_"));
     board.querySelector(".oidx").textContent = "";
     setFocusAngle(-1);
     return;
@@ -1014,6 +1158,10 @@ function setFocusAngle(j) {
 }
 
 // 按舞台尺寸算模型缩放和位置
+let SUPERSAMPLE = 1.5;
+// 模型光栅化后的最大宽度（物理像素）。超过显卡纹理上限（常见 4096）时浏览器会整层丢掉不画，
+// 表现为顶面或键帽消失；1.2 是阴影等伸出模型外的余量
+const MAX_RASTER_PX = 3600;
 function layoutStage() {
   const st = $("stage");
   const w = st.clientWidth, h = st.clientHeight;
@@ -1024,11 +1172,19 @@ function layoutStage() {
   st.style.setProperty("--s-edit", sEdit.toFixed(3));
   st.style.setProperty("--s-home", sHome.toFixed(3));
   st.style.setProperty("--s-sel", sSel.toFixed(3));
+  // zoom 取三种视角里最大的缩放再乘超采样系数，transform 里只剩 <1 的缩小。
+  // 超采样：模型往后倾斜，上半部分被透视压扁后要重新采样，按更高分辨率画再缩小会清楚很多
+  const sMax = Math.max(sEdit, sSel, sHome);
+  const kzCap = MAX_RASTER_PX / (KB_W * 1.2 * (window.devicePixelRatio || 1));
+  const kz = Math.max(Math.min(sMax * SUPERSAMPLE, kzCap), Math.min(sMax, 1));
+  st.style.setProperty("--kz", kz.toFixed(3));
   // 编辑视角：模型放在偏上的位置，给下方的小卡片留地方；窄屏卡片贴底，模型再往上一点
   const narrow = isNarrow();
-  st.style.setProperty("--ky-edit", Math.round(-h * (narrow ? .06 : .02)) + "px");
-  st.style.setProperty("--ky-sel", Math.round(-h * (narrow ? .25 : .22)) + "px");
-  st.style.setProperty("--ky-home", Math.round(-h * .1) + "px");
+  // zoom 也会放大 .kb 自己 transform 里的 px 位移，这里先除掉
+  const ky = f => (-h * f / kz).toFixed(1) + "px";
+  st.style.setProperty("--ky-edit", ky(narrow ? .06 : .02));
+  st.style.setProperty("--ky-sel", ky(narrow ? .25 : .22));
+  st.style.setProperty("--ky-home", ky(.1));
   placePop();
 }
 
@@ -1076,7 +1232,7 @@ function setType(media) {
   if (!p || media === p.media) return;
   if (!confirm("切换类型会清空这组 5 个键的设置。继续？")) return;
   p.media = media;
-  p.keys = p.keys.map(() => ({ mod: 0, k1: 0, k2: 0, media: 0, desc: "", descAuto: true }));
+  p.keys = p.keys.map(() => ({ mod: 0, k1: 0, k2: 0, media: 0, desc: "" }));
   selKey = -1; recording = -1;
   render();
 }
@@ -1136,18 +1292,6 @@ function buildPop() {
   }
   $("popRec").onclick = () => { recording = recording === selKey ? -1 : selKey; render(); };
   $("popClose").onclick = closePop;
-  const desc = $("popDesc");
-  desc.maxLength = DESC_MAX;
-  desc.oninput = () => {
-    const p = presets[active], k = p && p.keys[selKey];
-    if (!k) return;
-    k.desc = desc.value; k.descAuto = false;
-    $("popCount").textContent = `${desc.value.length}/${DESC_MAX}`;
-    desc.classList.toggle("bad", !isAscii(desc.value));
-    updateOled(); renderTabsOnly();
-    const cap = $("board").querySelectorAll(".cap")[selKey];
-    if (cap) cap.title = comboText(p, k) + (k.desc ? "\n屏幕显示：" + k.desc : "");
-  };
   // 在卡片里点输入框 / 下拉框时停止监听，免得打字被当成组合键
   $("pop").addEventListener("focusin", e => { if (isField(e.target) && recording >= 0) stopRecording(); });
 }
@@ -1195,10 +1339,6 @@ function renderPop() {
       sel.value = k[which];
     }
   }
-  const desc = $("popDesc");
-  if (document.activeElement !== desc) desc.value = k.desc;
-  $("popCount").textContent = `${desc.value.length}/${DESC_MAX}`;
-  desc.classList.toggle("bad", !isAscii(desc.value));
   if (wasHidden) {
     clearTimeout(popShowTimer);
     const showNow = () => {
@@ -1271,9 +1411,9 @@ function followPop(ms = 1100) {
   followPop.t2 = setTimeout(placePop, ms + 50);
 }
 
-// 说明是空的、或者之前是自动生成的，就跟着组合键自动更新
+// 屏幕上显示的说明一律按组合键自动生成（网页上不再单独编辑）
 function touchDesc(p, k) {
-  if (!k.desc || k.descAuto) { k.desc = autoDesc(p, k); k.descAuto = true; }
+  k.desc = autoDesc(p, k);
 }
 
 // ====================================================================== 键盘事件：录制组合键 / Esc 关闭
@@ -1326,8 +1466,9 @@ $("stage").addEventListener("transitionend", e => { if (e.target.classList.conta
 window.addEventListener("resize", layoutStage);
 
 // ====================================================================== 按钮
+$("btnBle").onclick = () => { if (!link) connectBle(); };
 $("btnConnect").onclick = async () => {
-  if (!port) return connect();
+  if (!link) return connectUsb();
   const n = dirtyCount();
   if (n && !confirm(`还有 ${n} 组改动没写入键盘，断开后这些改动会丢失。确定断开？`)) return;
   await disconnect();
@@ -1346,7 +1487,7 @@ $("btnLog").onclick = () => {
 };
 
 $("btnExport").onclick = () => {
-  const data = JSON.stringify({ app: "keybrick-keymap", version: 1, presets: presets.map(stripAuto) }, null, 2);
+  const data = JSON.stringify({ app: "keybrick-keymap", version: 1, presets }, null, 2);
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob([data], { type: "application/json" }));
   a.download = "keybrick-keymap.json";
@@ -1362,7 +1503,9 @@ $("fileInput").onchange = async e => {
     const data = JSON.parse(await file.text());
     if (data.app !== "keybrick-keymap" || !Array.isArray(data.presets)) throw new Error("不是改键导出的文件");
     if (data.presets.length !== presetCount) throw new Error(`文件里有 ${data.presets.length} 组预设，键盘是 ${presetCount} 组`);
-    presets = data.presets.map(p => ({ ...p, keys: p.keys.map(k => ({ ...k, descAuto: false })) }));
+    // 只取需要的字段（旧版导出的文件里可能带着已经不用的字段）
+    presets = data.presets.map(p => ({ name: p.name, media: !!p.media,
+      keys: p.keys.map(k => ({ mod: k.mod | 0, k1: k.k1 | 0, k2: k.k2 | 0, media: k.media | 0, desc: k.desc || "" })) }));
     selKey = -1;
     render();
     notice("已导入到页面。确认无误后点「写入键盘」。", "ok");
@@ -1376,9 +1519,13 @@ if ("serial" in navigator) {
     await disconnect();
     notice(n ? `键盘已拔出，${n} 组还没写入的改动已丢失。` : "键盘已拔出。", "warn");
   });
-} else {
-  notice("这个浏览器不支持 Web Serial。请用电脑版 Chrome 或 Edge 打开本页面。", "err");
 }
+if (!("serial" in navigator) && IS_ANDROID && !navigator.bluetooth) {
+  notice("这个浏览器不支持 Web Bluetooth。请用安卓版 Chrome 打开本页面。", "err");
+}
+if (!("serial" in navigator)) $("btnConnect").title = "这个浏览器不支持 USB 连接（Web Serial）";
+if (IS_ANDROID && !navigator.bluetooth) $("btnBle").title = "这个浏览器不支持蓝牙连接（Web Bluetooth）";
+if (!IS_ANDROID) $("btnBle").title = "经本机蓝牙桥连接（键盘要先和这台电脑配对；蓝牙桥见 README）";
 window.addEventListener("beforeunload", e => {
   if (dirtyCount()) { e.preventDefault(); e.returnValue = ""; }
 });

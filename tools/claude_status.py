@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-claude_status.py -- 把 Claude Code 的运行状态通过 USB 串口推给 Keybrick 键盘
+claude_status.py -- 把 Claude Code 的运行状态通过 USB 串口或蓝牙推给 Keybrick 键盘
 
 用法：作为 Claude Code 的 hook 命令（用 tools/install_claude_status.py 一键安装）。
 Claude Code 每次触发事件时运行它，事件信息（JSON）从标准输入传进来，
@@ -17,7 +17,8 @@ Claude Code 每次触发事件时运行它，事件信息（JSON）从标准输�
 也可以手动测试：  python claude_status.py work
                   python claude_status.py tool Bash
 
-支持 Windows / macOS / Linux。依赖：pyserial。
+支持 Windows / macOS / Linux。依赖：pyserial；走蓝牙还需要 bleak（可选）。
+优先走 USB 串口；没插线时自动走蓝牙（NUS 蓝牙串口，见下面"蓝牙"一节）。
 可选环境变量：KEYBRICK_PORT=COM3（或 /dev/cu.usbmodem1101）强制指定串口。
 
 设计原则：绝不能拖慢或卡住 Claude Code。
@@ -267,6 +268,243 @@ def send(line, wait_reply=False):
     return None, None
 
 
+# ============================================================================ 蓝牙（NUS）
+# 没插 USB 线时走蓝牙。蓝牙每次扫描 + 连接要几秒，不能让每个 hook 自己去连，所以：
+#   第一次需要时，在后台起一个"蓝牙桥"进程（同一个脚本带 --ble-bridge），
+#   它一直连着键盘的 NUS 蓝牙串口，在本机 127.0.0.1:BRIDGE_PORT 收 hook 发来的行。
+#   - 已连上：转发给键盘，等 @OK / @ERR 回给 hook（约 0.1 秒）
+#   - 还没连上：只记住最新一条，回 "@QUEUED"，连上后立刻补发；hook 不用等
+#   - 断开会自动重连；BRIDGE_IDLE_S 没有任何消息就自己退出
+# 需要 bleak（pip install bleak）。没装就只走 USB。设 KEYBRICK_BLE=0 可以关掉蓝牙。
+BRIDGE_PORT   = 47815
+BRIDGE_IDLE_S = 2 * 3600
+BLE_NAME      = os.environ.get("KEYBRICK_BLE_NAME", "ESP32-C3 Keybrick")
+NUS_RX        = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"     # 电脑 -> 键盘
+NUS_TX        = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"     # 键盘 -> 电脑
+
+
+def ble_enabled():
+    if os.environ.get("KEYBRICK_BLE", "1") == "0":
+        return False
+    try:
+        import importlib.util
+        return importlib.util.find_spec("bleak") is not None
+    except Exception:
+        return False
+
+
+def _bridge_request(line, timeout):
+    import socket
+    with socket.create_connection(("127.0.0.1", BRIDGE_PORT), timeout=0.5) as s:
+        s.settimeout(timeout)
+        s.sendall(line.encode("ascii", "replace"))
+        buf = b""
+        while not buf.endswith(b"\n"):
+            chunk = s.recv(256)
+            if not chunk:
+                break
+            buf += chunk
+    return buf.decode("utf-8", "replace").strip()
+
+
+def spawn_bridge():
+    import subprocess
+    kw = dict(stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True)
+    if IS_WINDOWS:
+        kw["creationflags"] = 0x08000000 | 0x00000200   # CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP
+    else:
+        kw["start_new_session"] = True
+    subprocess.Popen([sys.executable, os.path.abspath(__file__), "--ble-bridge"], **kw)
+
+
+def send_ble(line):
+    """交给蓝牙桥发送。返回 ("ble", 回复) 或 (None, None)。"""
+    if not ble_enabled():
+        return None, None
+    for attempt in range(2):
+        try:
+            reply = _bridge_request(line, timeout=3.0)
+            if reply.startswith("@"):
+                return "ble", reply
+            return None, None
+        except OSError:
+            if attempt == 0:
+                spawn_bridge()
+                # 等桥起来开始监听（Python + bleak 启动约 1 秒）
+                deadline = time.time() + 3.0
+                while time.time() < deadline:
+                    time.sleep(0.2)
+                    try:
+                        import socket
+                        socket.create_connection(("127.0.0.1", BRIDGE_PORT), timeout=0.2).close()
+                        break
+                    except OSError:
+                        pass
+    return None, None
+
+
+def bridge_main():
+    import asyncio
+    from bleak import BleakClient, BleakScanner
+
+    class Bridge:
+        def __init__(self):
+            self.client = None
+            self.connected = asyncio.Event()
+            self.replies = asyncio.Queue()
+            self.pending = None              # 没连上时攒着的最新一条
+            self.lock = asyncio.Lock()
+            self.last_msg = time.time()
+            self.rxbuf = b""
+
+        def on_tx(self, _char, data):
+            self.rxbuf += bytes(data)
+            while b"\n" in self.rxbuf:
+                raw, self.rxbuf = self.rxbuf.split(b"\n", 1)
+                text = raw.decode("utf-8", "replace").strip()
+                if text.startswith("@"):
+                    self.replies.put_nowait(text)
+
+        async def write_line(self, line, collect=False):
+            """发一行给键盘。collect=False：只要 @OK / @ERR（hook 用）；
+            collect=True：把所有 @ 回复收齐，到 @OK / @ERR / @END / @HELLO 为止（网页用，比如 @GET 有多行）。"""
+            while not self.replies.empty():
+                self.replies.get_nowait()
+            data = line.encode("ascii", "replace")
+            for i in range(0, len(data), 180):
+                await self.client.write_gatt_char(NUS_RX, data[i:i + 180], response=True)
+            got = []
+            deadline = time.time() + 4.0
+            while True:
+                text = await asyncio.wait_for(self.replies.get(), max(0.1, deadline - time.time()))
+                done = text.startswith(("@OK", "@ERR", "@END", "@HELLO"))
+                if not collect:
+                    if text.startswith(("@OK", "@ERR")):
+                        return text
+                    continue
+                got.append(text)
+                if done:
+                    return "\n".join(got)
+
+        async def ble_loop(self):
+            while True:
+                try:
+                    dev = await BleakScanner.find_device_by_name(BLE_NAME, timeout=10.0)
+                    if dev is None:
+                        await asyncio.sleep(5)
+                        continue
+                    gone = asyncio.Event()
+                    async with BleakClient(dev, disconnected_callback=lambda _c: gone.set()) as c:
+                        await c.start_notify(NUS_TX, self.on_tx)
+                        self.client = c
+                        self.connected.set()
+                        log("pid=%-6d bridge connected %s" % (os.getpid(), dev.address))
+                        if self.pending:
+                            line, self.pending = self.pending, None
+                            async with self.lock:
+                                try:
+                                    reply = await self.write_line(line)
+                                except Exception as ex:
+                                    reply = "error %s" % ex
+                            log("pid=%-6d bridge sent queued %-24s %s" % (os.getpid(), line.strip(), reply))
+                        await gone.wait()
+                except Exception as ex:
+                    log("pid=%-6d bridge ble error: %s" % (os.getpid(), ex))
+                self.client = None
+                self.connected.clear()
+                log("pid=%-6d bridge disconnected" % os.getpid())
+                await asyncio.sleep(2)
+
+        async def handle(self, reader, writer):
+            try:
+                line = (await asyncio.wait_for(reader.readline(), 2.0)).decode("ascii", "replace")
+                self.last_msg = time.time()
+                if line.split(" ", 1)[0] in ("GET", "POST", "OPTIONS"):
+                    await self.handle_http(line, reader, writer)
+                    return
+                if not line.startswith("@"):
+                    reply = "@ERR bad request"
+                elif not self.connected.is_set():
+                    self.pending = line           # 只留最新一条，旧状态没意义
+                    reply = "@QUEUED"
+                else:
+                    async with self.lock:
+                        try:
+                            reply = await self.write_line(line)
+                        except Exception as ex:
+                            reply = "@ERR ble %s" % ex
+                writer.write((reply + "\n").encode())
+                await writer.drain()
+            except Exception:
+                pass
+            finally:
+                writer.close()
+
+        # ---- 给改键网页（tools/keymap.html）用的本机 HTTP 接口
+        # Windows 上浏览器的 Web Bluetooth 连不上被系统当成 HID 键盘的设备（强制重新查询服务会失败），
+        # 所以网页的"蓝牙连接"在电脑上改走这里：
+        #   GET  /status  -> {"connected": true/false}
+        #   POST /cmd     -> 正文是一行 "@..." 命令，返回键盘的全部 @ 回复（多行）
+        async def handle_http(self, request_line, reader, writer):
+            method, path = (request_line.split(" ") + ["", ""])[:2]
+            length = 0
+            while True:
+                h = (await asyncio.wait_for(reader.readline(), 2.0)).decode("latin-1").strip()
+                if not h:
+                    break
+                if h.lower().startswith("content-length:"):
+                    length = int(h.split(":", 1)[1])
+            body = (await asyncio.wait_for(reader.readexactly(length), 2.0)).decode("ascii", "replace") if length else ""
+            status, ctype, out = "200 OK", "text/plain; charset=utf-8", ""
+            if method == "OPTIONS":
+                status = "204 No Content"
+            elif method == "GET" and path.startswith("/status"):
+                ctype = "application/json"
+                out = '{"connected": %s}' % ("true" if self.connected.is_set() else "false")
+            elif method == "POST" and path.startswith("/cmd"):
+                line = body.strip()
+                if not line.startswith("@"):
+                    out = "@ERR bad request"
+                elif not self.connected.is_set():
+                    out = "@ERR 蓝牙桥还没连上键盘"
+                else:
+                    async with self.lock:
+                        try:
+                            out = await self.write_line(line + "\n", collect=True)
+                        except asyncio.TimeoutError:
+                            out = "@ERR 键盘没有回应"
+                        except Exception as ex:
+                            out = "@ERR ble %s" % ex
+            else:
+                status, out = "404 Not Found", "not found"
+            data = out.encode("utf-8")
+            head = ("HTTP/1.1 %s\r\n"
+                    "Content-Type: %s\r\n"
+                    "Content-Length: %d\r\n"
+                    "Access-Control-Allow-Origin: *\r\n"
+                    "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n"
+                    "Access-Control-Allow-Headers: Content-Type\r\n"
+                    "Access-Control-Allow-Private-Network: true\r\n"
+                    "Cache-Control: no-store\r\n"
+                    "Connection: close\r\n\r\n") % (status, ctype, len(data))
+            writer.write(head.encode("latin-1") + data)
+            await writer.drain()
+
+        async def run(self):
+            try:
+                server = await asyncio.start_server(self.handle, "127.0.0.1", BRIDGE_PORT)
+            except OSError:
+                return                            # 端口被占：已经有一个桥在跑了
+            log("pid=%-6d bridge start" % os.getpid())
+            asyncio.create_task(self.ble_loop())
+            async with server:
+                while time.time() - self.last_msg < BRIDGE_IDLE_S:
+                    await asyncio.sleep(30)
+            log("pid=%-6d bridge exit (idle)" % os.getpid())
+
+    asyncio.run(Bridge().run())
+
+
 # ============================================================================ 日志
 def log(msg):
     try:
@@ -288,10 +526,12 @@ def deliver(line, born, wait_reply=False):
                 note = "stale, dropped"             # 更晚的事件已经发出去了，这条作废
             else:
                 port, reply = send(line, wait_reply=wait_reply)
+                if not port:                    # 没插 USB（或串口被占）：走蓝牙
+                    port, reply = send_ble(line)
                 if port:
                     OrderLock.mark_sent(born)
                 else:
-                    note = "no keyboard / port busy"
+                    note = "no keyboard (usb / ble)"
     except Exception as ex:
         note = "error: %s" % ex
     return port, reply, note
@@ -319,6 +559,18 @@ def set_turn(session_id, token):
             f.write(token)
     except OSError:
         pass
+
+
+def prune_turn_files(max_age_s=3 * 24 * 3600):
+    """清掉超过 3 天的会话记录文件（会话没正常结束时留下的）。"""
+    import glob
+    now = time.time()
+    for f in glob.glob(os.path.join(_TMP, "keybrick_turn_*.txt")):
+        try:
+            if now - os.path.getmtime(f) > max_age_s:
+                os.remove(f)
+        except OSError:
+            pass
 
 
 def get_turn(session_id):
@@ -390,6 +642,9 @@ def main():
     if len(sys.argv) >= 5 and sys.argv[1] == "--watch":
         watch(sys.argv[2], sys.argv[3], sys.argv[4])
         return
+    if len(sys.argv) >= 2 and sys.argv[1] == "--ble-bridge":
+        bridge_main()
+        return
 
     t0 = time.time()
     born = process_start_time()
@@ -415,8 +670,16 @@ def main():
             spawn_watcher(data.get("transcript_path"), data.get("session_id"))
         except Exception as ex:
             log("pid=%-6d spawn watcher failed: %s" % (os.getpid(), ex))
-    elif event in ("Stop", "SessionEnd"):
+    elif event == "Stop":
         set_turn(data.get("session_id"), "ended")
+    elif event == "SessionEnd":
+        # 会话结束：删掉这个会话的记录文件（监视进程读不到自己的令牌就会退出）
+        try:
+            os.remove(turn_file(data.get("session_id")))
+        except OSError:
+            pass
+    if event == "SessionStart":
+        prune_turn_files()
 
     line = build_line(sys.argv, data)
     if not line:

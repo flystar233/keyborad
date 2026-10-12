@@ -3,8 +3,10 @@
 一块 5 键蓝牙快捷键盘的固件。连上电脑或手机后，5 个键发送可切换的快捷键组合，
 另外带 OLED 状态屏、5 颗 RGB 灯和锂电池供电。
 
-- **蓝牙 HID 键盘**：免驱，支持普通快捷键和媒体键（音量、播放/暂停等）
-- **5 组键位预设**：随时切换，掉电保存；用本地网页就能改键，不用重新烧录
+- **蓝牙 HID 键盘**：免驱，支持普通快捷键和媒体键（音量、播放/暂停等）；基于 NimBLE 协议栈，
+  配对信息掉电保存，键盘重启、电脑重启或睡眠唤醒后自动回连
+- **5 组键位预设**：随时切换，掉电保存；用本地网页就能改键（USB 或蓝牙都行），不用重新烧录
+- **蓝牙串口（NUS）**：不插线也能改键、推送 Claude Code 状态，和 USB 串口用同一套命令
 - **OLED 状态屏**（128×32）：电池电量 + 电压、蓝牙状态、按键提示
 - **5 颗 WS2812B 灯**：6 种灯效，按键反馈，连接 / 低电状态提示
 - **蜂鸣器**：开机 / 连接 / 断开 / 确认提示旋律，按键音，内置彩蛋音乐，三档音量开关
@@ -29,9 +31,8 @@
 10. [故障排查](#10-故障排查)
 11. [硬件与引脚](#11-硬件与引脚)
 12. [代码结构](#12-代码结构)
-13. [开发须知：这块板的几个坑](#13-开发须知这块板的几个坑)
-14. [致谢](#14-致谢)
-15. [许可证](#15-许可证)
+13. [致谢](#13-致谢)
+14. [许可证](#14-许可证)
 
 ---
 
@@ -54,9 +55,9 @@
 
 | 按键 | 作用 |
 | --- | --- |
-| **K1~K5** | 发送当前预设的快捷键（按下立即发送，按住不连发） |
-| **U4 短按** | 切换灯效（见 [4. 灯效](#4-灯效)） |
-| **U4 长按 1 秒** | 进入 / 退出 **预设切换** 模式（响一声） |
+| **K1~K5** | 发送当前预设的快捷键（按下立即发送；按住和普通键盘一样会连发，比如按住 Backspace 一直删） |
+| **SW1 短按** | 切换灯效（见 [4. 灯效](#4-灯效)） |
+| **SW1 长按 1 秒** | 进入 / 退出 **预设切换** 模式（响一声） |
 
 ### 2.1 内置的 5 组预设
 
@@ -73,7 +74,7 @@
 
 ### 2.2 切换预设
 
-1. **长按 U4 1 秒**，听到"嘀"一声进入预设切换模式：5 颗灯整体偏青色，
+1. **长按 SW1 1 秒**，听到"嘀"一声进入预设切换模式：5 颗灯整体偏青色，
    屏幕显示 `> Config Preset` 和当前预设名，下方每 2 秒滚动显示各键说明。
 2. **K1 / K2** 上一组 / 下一组（按住可以连续翻页）。翻到的预设**立即生效**，可以直接试按。
 3. **K3 确认**：保存到 flash（断电不丢），"叮咚"一声回到正常模式。
@@ -85,7 +86,7 @@
 | **K4** | 声音档位：全开 → 关按键音 → 静音 → 全开（立即保存，见 [2.3](#23-声音)） |
 | **K5** | 播放彩蛋音乐，《欢乐颂》（约 21 秒）《卡农》快速段（约 22 秒）轮流；放的时候再按一下停止 |
 
-不确认就退出（再次长按 U4，或串口 `n`），会**恢复成进来之前的预设**。
+不确认就退出（再次长按 SW1，或串口 `n`），会**恢复成进来之前的预设**。
 预设切换模式下按键**不会**向电脑发送快捷键。
 
 ### 2.3 声音
@@ -152,7 +153,7 @@ Claude Bash      1:23 ← Claude Code 状态（见 6. Claude Code 状态）
 
 ### 息屏
 
-- 无操作 20 秒变暗，30 秒关屏；按任意键（包括 U4）唤醒。
+- 无操作 20 秒变暗，30 秒关屏；按任意键（包括 SW1）唤醒。
 - 低电时强制变暗省电。
 
 ---
@@ -171,7 +172,7 @@ Claude Bash      1:23 ← Claude Code 状态（见 6. Claude Code 状态）
 
 ### 灯效模式（6 种）
 
-**短按 U4** 切换到下一种（松开时生效）。上电默认第 1 种，不保存。
+**短按 SW1** 切换到下一种（松开时生效）。上电默认第 1 种，不保存。
 
 | # | 名称 | 效果 |
 | --- | --- | --- |
@@ -253,13 +254,17 @@ TP4056 在**没装电池**时也会让 BAT+ 一直保持 4.2V，软件无法区�
 
 Claude Code 的 **hooks**（事件钩子）在每次提交提示词、调用工具、请求权限、完成时，
 运行 `tools/claude_status.py`。脚本把事件换成一行 `@CLAUDE <状态> [工具名]`，
-通过 USB 串口发给键盘。工具调用的钩子在后台运行，**不会拖慢 Claude Code**；
-键盘没插、串口被占用时脚本直接安静退出。
+发给键盘：**插着 USB 线就走 USB 串口，没插线就走蓝牙**。工具调用的钩子在后台运行，**不会拖慢 Claude Code**；
+USB 和蓝牙都找不到键盘时脚本直接安静退出。
+
+**走蓝牙时**：第一次需要时脚本会在后台起一个"蓝牙桥"小进程，一直连着键盘的蓝牙串口（NUS），
+之后每个钩子只是把一行交给它，约 0.2 秒送达（改键网页的「蓝牙连接」在电脑上也走这个桥，本机端口 47815）。桥刚启动、还没连上时（约 5 秒）只记住最新一条，
+连上立刻补发。断开会自动重连，2 小时没有消息自己退出。蓝牙需要 Python 库 `bleak`（安装脚本会自动装）。
 
 ### 安装（任何一台电脑，一条命令）
 
-支持 Windows / macOS / Linux。需要：装了 Claude Code、有 Python 3.7+、键盘用 **USB 数据线**连着这台电脑
-（状态走 USB 串口，只连蓝牙收不到）。
+支持 Windows / macOS / Linux。需要：装了 Claude Code、有 Python 3.7+，键盘用 USB 数据线连着这台电脑，
+**或者**已经和这台电脑蓝牙配对。
 
 1. 把 `tools/claude_status.py` 和 `tools/install_claude_status.py` 这两个文件拷到那台电脑（放同一个目录）。
 2. 运行：
@@ -270,7 +275,7 @@ Claude Code 的 **hooks**（事件钩子）在每次提交提示词、调用工�
 
 安装脚本会：
 
-1. 检查 pyserial，没有就自动安装；
+1. 检查 pyserial（USB 用，必需）和 bleak（蓝牙用，可选），没有就自动安装；
 2. 把 `claude_status.py` 复制到 `~/.claude/keybrick/`（装完后那两个文件可以删掉）；
 3. 把 7 个钩子合并进 `~/.claude/settings.json`：只增删本工具自己的条目，其它设置和别的钩子原样保留，
    改之前备份成 `settings.json.bak-keybrick`，重复运行不会重复添加；
@@ -298,10 +303,11 @@ Claude Code 的 **hooks**（事件钩子）在每次提交提示词、调用工�
   （Windows 如 `COM3`，macOS 如 `/dev/cu.usbmodem1101`）。
 - **Linux 串口权限**：`sudo usermod -aG dialout $USER`，重新登录后生效。
 - **暂时关掉**：Claude Code 里输入 `/hooks` 可以查看、停用这些钩子。
-- **注意**：改键网页或串口监视器开着时串口被占用，这期间的状态发不过去（不影响 Claude Code）。
+- **注意**：改键网页或串口监视器开着时 USB 串口被占用，这期间会自动改走蓝牙（如果配对过）。
+- **只用 USB**：设环境变量 `KEYBRICK_BLE=0` 关掉蓝牙。
 - **打断检测**：Claude Code 被打断时不会触发"完成"事件，所以每次提交提示词时会在后台起一个小进程，盯着这个会话的记录文件，看到打断记录就把键盘切回 `Claude ready`；这一轮正常结束或下一轮开始时它自动退出。
 - **排查**：每次发送都记在临时目录的 `keybrick_claude.log`（Windows 是 `%TEMP%\keybrick_claude.log`），
-  记录事件、状态、串口、是否被丢弃、耗时。
+  记录事件、状态、走的通道（`COMx` 或 `ble`）、是否被丢弃、耗时；蓝牙桥的连接 / 断开也记在这里。
 - **顺序保证**：多个钩子进程按"进程创建时刻"排队发送，晚到的旧消息直接丢弃；
   "开始 / 提交 / 等你 / 完成 / 关闭"这几个钩子同步运行，保证一定送到，工具事件在后台运行不拖慢 Claude Code。
 
@@ -313,6 +319,7 @@ Claude Code 的 **hooks**（事件钩子）在每次提交提示词、调用工�
 
 - [PlatformIO](https://platformio.org/)（VS Code 插件或命令行）
 - 工具链：`espressif32@6.10.0`（arduino-esp32 2.0.17），首次编译会自动下载
+- 蓝牙库：[NimBLE-Arduino](https://github.com/h2zero/NimBLE-Arduino) 2.x（`platformio.ini` 的 `lib_deps`），首次编译会自动下载
 - 板子用 USB-C 直接连电脑（芯片内置 USB-Serial/JTAG，无需 USB 转串口芯片）
 
 ### 命令（在项目根目录执行）
@@ -335,7 +342,7 @@ pio device monitor --port COM16 --dtr 0 --rts 0
 如果 `pio` 不在 PATH 里，用完整路径 `$env:USERPROFILE\.platformio\penv\Scripts\pio.exe`。
 
 > **必须用 `tools\flash.ps1` 烧录，不要用 `pio run -t upload`**：后者在这块板上会报
-> `Wrong boot mode detected (0xd)`。原因见 [13.1](#131-烧录必须用-toolsflashps1)。
+> `Wrong boot mode detected (0xd)`（固件运行时 esptool 默认的复位方式进不了下载模式，脚本改用 `--before usb_reset`）。
 >
 > **看日志必须带 `--dtr 0 --rts 0`**，否则打开串口会让芯片复位或停在下载模式。
 
@@ -344,8 +351,8 @@ pio device monitor --port COM16 --dtr 0 --rts 0
 
 ### 资源占用
 
-RAM 约 12%（40KB / 320KB），Flash 约 79%（1037KB / 1280KB）。
-BLE 协议栈占了大部分 Flash；如果以后功能再加多，需要换更大的应用分区表。
+RAM 约 8%（26KB / 320KB），Flash 约 41%（526KB / 1280KB）。
+蓝牙协议栈换成 NimBLE 后 Flash 少了一半左右（之前用 Bluedroid 约 79%），加功能的余量很充足。
 
 ---
 
@@ -353,21 +360,30 @@ BLE 协议栈占了大部分 Flash；如果以后功能再加多，需要换更�
 
 ### 8.1 用网页改键
 
-`tools/keymap.html` 是一个本地网页，通过 USB 直接读写键盘上的 5 组预设，**不用重新烧录**。
+`tools/keymap.html` 是一个本地网页，通过 USB 或蓝牙直接读写键盘上的 5 组预设，**不用重新烧录**。
 
-1. 用 USB 线把键盘连到电脑，**关掉** PlatformIO 串口监视器等占用串口的程序。
-2. 用**电脑版 Chrome 或 Edge** 双击打开 `tools/keymap.html`（其它浏览器不支持 Web Serial）。
-3. 点右上角 **连接键盘**，在弹出的列表里选 `USB JTAG/serial debug unit`（或带 `COMx` 的那一项）。
-4. 页面自动读出 5 组预设。选一组，可以修改：
+1. 用 **Chrome 或 Edge** 双击打开 `tools/keymap.html`（其它浏览器不支持 Web Serial / Web Bluetooth）。
+2. 二选一连接键盘：
+   - **USB 连接**：插上 USB 线，**关掉** PlatformIO 串口监视器等占用串口的程序，点右上角「USB 连接」，
+     在列表里选 `USB JTAG/serial debug unit`（或带 `COMx` 的那一项）。
+   - **蓝牙连接**：键盘先和这台电脑配对好（正常当键盘用的状态就行），点右上角「蓝牙连接」。
+     电脑上要经过本机的**蓝牙桥**（和 Claude Code 状态推送是同一个后台进程）：装了状态推送的话没插线时会自动启动；
+     也可以手动运行 `python tools/claude_status.py --ble-bridge`（需要 `pip install bleak`）。
+     安卓手机上的 Chrome 直接用浏览器自带的蓝牙，在列表里选 `ESP32-C3 Keybrick`。
+     > 为什么电脑上不直接用浏览器的蓝牙：Windows 把键盘当成 HID 设备占用着，浏览器的 Web Bluetooth
+     > 连它时会强制重新查询服务列表，这一步会失败（报找不到 `6e400002...` 特征值）。
+3. 顶栏状态会显示"已连接（USB）"或"已连接（蓝牙）"。
+4. 页面自动读出 5 组预设，并显示键盘当前正在用的那一组。点模型左上角的圆钮 **1~5**
+   切换预设，键盘会同步切过去（圆钮下方的短横线标出键盘当前用的是哪组）。选好一组后可以修改：
    - **预设名**（≤19 个英文字符）和**类型**（普通快捷键 / 媒体键）
    - 每个键的**修饰键**（Ctrl / Shift / Alt / Win）+ **按键**（最多两个，如 Ctrl+K+C）；
      也可以点 **录制**，然后直接在电脑键盘上按组合键
    - 媒体键：音量、播放 / 暂停、上一曲 / 下一曲、静音、计算器、浏览器后退等
-   - **屏幕说明**（≤15 个英文字符，按键时显示在 OLED 上；不填会按组合键自动生成）
+   - 按键时 OLED 上显示的说明按组合键自动生成（如 `Ctrl+Shift+S`、`Volume +`），不用单独填
 5. 点 **写入键盘**：5 组一起写入并保存到 flash，立即生效，断电不丢。
 
-其它按钮：**设为键盘当前预设**（切到正在编辑的这组）、**恢复出厂预设**、**导出到文件 / 从文件导入**（备份或分享键位）。
-有改动但还没写入的预设，标签上会有一个圆点。
+其它按钮：**恢复出厂预设**、**导出到文件 / 从文件导入**（备份或分享键位）。
+有改动但还没写入的预设，对应圆钮右上角会有一个橙色圆点；右上角「写入键盘」按钮上显示未写入的组数。
 
 > - 屏幕字体只有英文字符，预设名和说明里不能用中文。
 > - 有些组合键会被浏览器或系统先拦截（如 Ctrl+W、Alt+Tab、Win+D），录制不到；用下拉框手动选即可。
@@ -418,7 +434,7 @@ F1~F12 = `0x3A`~`0x45`，Delete `0x4C`，方向键 → ← ↓ ↑ = `0x4F`~`0x5
 | 蓝牙设备名 `BLE_DEVICE_NAME` | `include/board_config.h` | `ESP32-C3 Keybrick` |
 | 是否装了电池 `BATTERY_PRESENT` | `include/board_config.h` | 1 |
 | 低电阈值 `BAT_LOW_V` / `BAT_LOW_RELEASE_V` | `include/board_config.h` | 3.50V / 3.60V |
-| U4 长按时间 `MODE_HOLD_MS` | `src/system.cpp` | 1000ms |
+| SW1 长按时间 `MODE_HOLD_MS` | `src/system.cpp` | 1000ms |
 | 翻页连发延迟 / 间隔 | `include/buttons.h` | 450ms / 140ms |
 | 变暗 / 关屏时间 | `src/system.cpp` | 20s / 30s |
 | 提示旋律 / 彩蛋曲子 | `src/buzzer.cpp` | 见 [2.3 声音](#23-声音) |
@@ -436,13 +452,13 @@ F1~F12 = `0x3A`~`0x45`，Delete `0x4C`，方向键 → ← ↓ ↑ = `0x4F`~`0x5
 | 键 | 作用 |
 | --- | --- |
 | `?` | 显示帮助 |
-| `@...` | 网页改键、Claude 状态用的行协议（见 `src/system.cpp` 的"上位机改键协议"注释），手动一般用不到 |
+| `@...` | 网页改键、Claude 状态用的行协议（见 `src/system.cpp` 的"上位机改键协议"注释），手动一般用不到。蓝牙串口（NUS）也能发同样的命令，单键诊断命令只走 USB |
 | `s` | 打印状态：模式、预设、电压 / 电量、屏幕、声音档位、灯珠电源 |
 | `1`~`5` | 直接切换到第 N 组预设并保存 |
 | `p` | 打印当前预设 5 个键的 HID 报文字节 |
 | `n` / `c` | 切到 正常 / 预设切换 模式 |
 | `v` | 切换"是否装了电池" |
-| `e` / `k` | 切换下一个灯效 / 查看当前灯效和 U4 按键状态 |
+| `e` / `k` | 切换下一个灯效 / 查看当前灯效和 SW1 按键状态 |
 | `r` | 重跑灯珠自检（红绿蓝白） |
 | `x` | 逐颗逐通道检测：每颗灯依次只亮 红 / 绿 / 蓝 / 白 |
 | `o` / `f` | 灯珠电源 开 / 关（用万用表量灯珠供电时用） |
@@ -468,16 +484,19 @@ F1~F12 = `0x3A`~`0x45`，Delete `0x4C`，方向键 → ← ↓ ↑ = `0x4F`~`0x5
 | 烧录报 `Wrong boot mode detected` | 用 `tools\flash.ps1`，不要用 `pio run -t upload`；仍不行就手动进下载模式（见 [7](#7-编译与烧录)） |
 | 串口没有任何输出 | 确认带了 `--dtr 0 --rts 0`；复位后马上打开串口；发 `?` 看有没有回应 |
 | 搜不到蓝牙设备 | 灯是不是黄色呼吸（在广播）；电脑上删除旧的配对记录后重新搜索 |
+| 蓝牙反复连上又断开 | 电脑上的配对记录和键盘对不上（比如从旧固件升级后）：在电脑蓝牙设置里删除 `ESP32-C3 Keybrick` 再重新添加。串口日志里会看到 `link up ... encrypted=0` 后紧跟 `link down` |
 | 网页点"连接键盘"列表里没有设备 | 换一根能传数据的 USB 线；确认用的是电脑版 Chrome / Edge |
 | 网页提示"打不开串口" | 串口被占用：关掉 PlatformIO 串口监视器、Arduino IDE 等 |
 | 网页提示"键盘没有回应" | 固件太旧，先用 `tools\flash.ps1` 烧录最新固件 |
+| 网页点「蓝牙连接」提示要启动蓝牙桥 | 运行 `python tools/claude_status.py --ble-bridge`（需要 bleak），等几秒再点；或者插线用「USB 连接」 |
+| 网页提示蓝牙桥还没连上键盘 | 键盘要开着、并且已经在系统蓝牙设置里配对；刚启动的桥要几秒才连上 |
 | 能连上但按键没反应 | 是否在正常模式（灯不偏青、屏幕只有状态行）；当前预设的这个键是不是空键（`p` 查看） |
 | 灯全不亮 | 串口 `g`：pin21 `out_sel` 应为 `128`；量灯珠供电是否 3.3V（`o`/`f` 切换时应跟着变） |
 | 只有第 1 颗灯亮 | LED1 `DO` → LED2 `DI` 之间断开（虚焊或方向） |
 | 某颗灯颜色偏黄 / 偏色 | 发 `x` 逐通道检测；某个通道不亮就是那颗灯坏了或虚焊（黄色 = 蓝通道不亮） |
 | 红绿颜色反了 | 改 `src/ws2812.cpp` 中 `show()` 的 `order[3] = {1,0,2}` |
 | 屏幕不亮 | 串口 `i`：扫到 `0x3C` 说明屏幕在线；什么都扫不到就检查排针 3V3 / GND / SDA / SCL |
-| K3 没反应 / 灯全灭 | 检查 `platformio.ini` 中 `ARDUINO_USB_CDC_ON_BOOT=1` 是否还在（见 [13.2](#132-gpio20--gpio21-与-uart0-冲突)） |
+| K3 没反应 / 灯全灭 | 检查 `platformio.ini` 中 `ARDUINO_USB_CDC_ON_BOOT=1` 是否还在（K3 / GPIO20 和灯珠电源 / GPIO21 是 UART0 默认引脚，日志必须走 USB） |
 | 上电时按键乱触发 / 进了下载模式 | GPIO0 / 2 / 8 / 9 是启动配置脚，上电瞬间不要按住 K1 / K2 / K5 / BOOT |
 | 电压和万用表不一致 | 调 `BATTERY_CAL`（见 [5](#5-电池)） |
 | 没装电池却显示 4.2V / 100% | 把 `BATTERY_PRESENT` 设为 0，或串口发 `v` |
@@ -493,7 +512,7 @@ F1~F12 = `0x3A`~`0x45`，Delete `0x4C`，方向键 → ← ↓ ↑ = `0x4F`~`0x5
 | K3 | GPIO20 | 按下接地，内部上拉；同时是 UART0 RXD 默认脚 |
 | K4 | GPIO7 | 按下接地，内部上拉 |
 | K5 | GPIO8 | 按下接地，板上 10K 上拉；启动配置脚 |
-| U4（灯效 / 模式键） | GPIO6 | 按下接地，内部上拉 |
+| SW1（灯效 / 模式键） | GPIO6 | 按下接地，内部上拉 |
 | WS2812B 数据 | GPIO1 | 经 100Ω 接 LED1，5 颗级联（WS2812B-2020） |
 | 灯珠电源开关 | GPIO21 | AO3401 P-MOS 高边开关，**低电平导通**；灯全灭 1 分钟自动断电省电；同时是 UART0 TXD 默认脚 |
 | OLED SDA / SCL | GPIO4 / GPIO5 | SSD1306 128×32，硬件 I2C 400kHz，地址 `0x3C` |
@@ -503,6 +522,7 @@ F1~F12 = `0x3A`~`0x45`，Delete `0x4C`，方向键 → ← ↓ ↑ = `0x4F`~`0x5
 | USB | GPIO18 / GPIO19 | 芯片内置 USB-Serial/JTAG，烧录和日志都走这里 |
 
 电源：TP4056 充电（500mA），TLV75733 LDO 输出 3.3V。
+外壳：3D 打印，壳体 + 盖子用 4 颗 M2×14 自攻螺丝从底部固定，见 [case/README.md](case/README.md)。
 除 GPIO9（BOOT）外，所有可用引脚都已占用。
 
 ---
@@ -513,99 +533,42 @@ F1~F12 = `0x3A`~`0x45`，Delete `0x4C`，方向键 → ← ↓ ↑ = `0x4F`~`0x5
 platformio.ini            工程配置
 include/board_config.h    所有引脚与硬件参数（改硬件只改这里）
 src/main.cpp              启动流程 + 主循环：蓝牙连接、报文发送、各模块调度
-src/system.cpp            模式切换、按键与 U4 事件、OLED 界面、串口诊断命令、改键协议
+src/system.cpp            模式切换、按键与 SW1 事件、OLED 界面、串口诊断命令、改键协议（USB / 蓝牙两个通道）
 src/buttons.cpp           K1~K5 消抖与连发（非阻塞）
 src/settings.cpp          出厂预设表 + 用户预设的 NVS 读写
 src/display.cpp           SSD1306 驱动：512 字节帧缓冲、6×8 字体、图标
-src/led_effects.cpp       灯效与状态提示的合成，U4 消抖
+src/led_effects.cpp       灯效与状态提示的合成，SW1 消抖
 src/ws2812.cpp            WS2812B 驱动（RMT 硬件时序）+ 灯珠电源开关
 src/buzzer.cpp            蜂鸣器：LEDC 硬件 PWM + 非阻塞音符播放器、提示旋律、彩蛋曲子
 src/battery.cpp           电池电压采样、电量换算、低电判断
 include/usb_log.h         直接写 USB-Serial/JTAG FIFO 的日志
 include/display_font.h    6×8 ASCII 字库
 include/display_icons.h   电池 / 蓝牙 8×8 图标（取自 u8g2 open-iconic）
-lib/hid2ble/              BLE HID 键盘 + 媒体键
+lib/ble_keyboard/         BLE HID 键盘 + 媒体键 + 电池电量 + NUS 蓝牙串口（基于 NimBLE-Arduino）
 tools/flash.ps1           烧录脚本
-tools/keymap.html         网页改键工具（Chrome / Edge，Web Serial）
-tools/claude_status.py    Claude Code hook：把运行状态推给键盘
+tools/keymap.html         网页改键工具（Chrome / Edge，Web Serial 或 Web Bluetooth）
+tools/claude_status.py    Claude Code hook：把运行状态推给键盘（USB 优先，没插线走蓝牙桥）
 tools/install_claude_status.py  一键安装 / 卸载上面这个 hook（任何电脑）
 tools/verify_icons.py     图标位图校验脚本
+case/build_case.py        3D 打印外壳生成脚本（参数化，见 case/README.md）
+case/out/                 生成好的外壳 STL（壳体 + 盖子）
+case/ref/                 底稿：v1.2f 旧版外壳 STL + PCB 图（外壳开孔位置都按它测量）
 ```
 
 所有模块都是非阻塞的：主循环每轮轮询各模块后让出 1ms，不使用硬件定时器中断。
 
 ---
 
-## 13. 开发须知：这块板的几个坑
-
-### 13.1 烧录必须用 `tools\flash.ps1`
-
-板子通过芯片内置的 USB-Serial/JTAG 连接电脑。固件运行时，esptool 默认的复位方式进不了下载模式；
-而 PlatformIO 总会追加 `--before default_reset` 并覆盖自定义设置。
-`flash.ps1` 直接调用 esptool，使用 USB-JTAG 专用的 `--before usb_reset`。
-
-### 13.2 GPIO20 / GPIO21 与 UART0 冲突
-
-K3（GPIO20）和灯珠电源开关（GPIO21）正好是 UART0 的默认 RX / TX。
-如果日志走 UART0，这两个脚会被 UART 占用：K3 读不到，灯珠电源无法打开（5 颗灯全灭）。
-因此：
-
-- `platformio.ini` 中的 `ARDUINO_USB_MODE=1` 和 `ARDUINO_USB_CDC_ON_BOOT=1` **不能删**，让日志走 USB。
-- `ws2812.cpp` 驱动 GPIO21 之前先调用 `gpio_reset_pin()`，把它从 UART0 手里拿回来；**这一句不能删**。
-
-### 13.3 日志不用 `Serial`
-
-arduino-esp32 2.0.x 的 USB CDC（`HWCDC`）在主机没主动发过数据前会丢弃所有输出。
-所以日志通过 `include/usb_log.h` 直接写硬件 FIFO，主机不读时最多等 20ms 就放弃。
-**不要调用 `Serial.begin()`**，日志统一用 `usbLog::print` / `usbLog::printf`。
-
-### 13.4 OLED 地址是 `0x3C`
-
-Arduino `Wire` 使用 7 位地址。不要写成 8 位形式的 `0x78`（那会在总线上发出 `0xF0`，屏幕不响应）。
-
-### 13.5 I2C 单次传输不能超过 128 字节
-
-`Wire` 的发送缓冲只有 128 字节，超出的部分会被**静默丢弃**（`Wire.write()` 返回 0，不报错）。
-`display.cpp` 刷屏时每次只发 1 个控制字节 + 32 个数据字节，并在每帧开始前重设写入窗口，
-避免画面错位。修改刷屏代码时要保持这一点。
-
-### 13.6 BLE 栈是异步建立的
-
-`Hid2Ble::begin()` 只是创建一个任务去搭建 BLE 栈。在 `isReady()` 返回 true 之前，
-库内部的接口都会直接返回、不会崩溃。断线后重新广播要用 `reAdvertise()`，
-**不能再次调用 `begin()`**（会重复初始化 BLE 栈，最终内存耗尽）。
-
-### 13.7 图标位图要用脚本校验
-
-`include/display_icons.h` 里的位图肉眼很难查错。修改后运行：
-
-```powershell
-python tools\verify_icons.py
-```
-
-脚本会把位图渲染成 ASCII 并检查结构。如果把 u8g2 仓库的
-`tools/font/bdf/open_iconic_all_1x.bdf` 放到 `%TEMP%\u8g2m\u8g2-master\tools\font\bdf\`，
-还会与官方字形逐像素比对。
-
-### 13.8 硬件改进建议
-
-- **AO3401 栅极加 100K 上拉到源极**：让上电瞬间（GPIO21 还没被固件接管时）灯珠电源确定处于关闭状态。
-- **灯珠亮度**：WS2812B-2020 现在由 3.3V 供电，5 颗全白峰值约 175mA。
-  想更亮需要改 5V 供电，但数据线高电平门槛会升到 3.5V，需要加电平转换。
-- **充电状态检测**：TP4056 的 CHRG 脚目前只接了指示灯。如果接到一个 GPIO，固件就能准确显示"充电中"。
-
----
-
-## 14. 致谢
+## 13. 致谢
 
 - 本项目基于一个开源的 ESP32-C3 蓝牙小键盘工程重写。原工程提供了最初的思路、
-  6 组键位预设、6×8 ASCII 字库（`include/display_font.h`）和 BLE HID 库（`lib/hid2ble/`，
-  在此基础上修了空指针崩溃、加了断线重连和媒体键）。代码注释里的"原工程"指的就是它。
+  6 组键位预设、6×8 ASCII 字库（`include/display_font.h`）和 BLE HID 库（`lib/ble_keyboard/`，
+  后来改用 NimBLE 重写，保留了原来的 HID 报告描述符）。代码注释里的"原工程"指的就是它。
 - 电池和蓝牙图标取自 [u8g2](https://github.com/olikraus/u8g2) 附带的
   [Open Iconic](https://github.com/iconic/open-iconic) 字形。
 - 网页改键使用浏览器的 [Web Serial API](https://developer.mozilla.org/docs/Web/API/Web_Serial_API)。
 
-## 15. 许可证
+## 14. 许可证
 
 本项目以 [GNU General Public License v3.0](LICENSE) 发布：可以自由使用、修改和再分发，
 但基于本项目发布的修改版也必须以 GPL-3.0 开源。

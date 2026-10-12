@@ -4,8 +4,8 @@
 //  刷新策略：每 LED_REFRESH_MS 重算一帧并 rmt_write_items 发出去。
 //  每次发送 120 bit 约 150us，RMT 硬件保证时序，BLE 中断打断也不影响。
 //
-//  灯效模式的切换开关在 GPIO6（板上 U4 SH-1806SA，另一端接 GND）：
-//  U4 是点按开关：这里只做消抖，短按切灯效 / 长按切模式由 SystemUpdate() 判定。
+//  灯效模式的切换开关在 GPIO6（板上 SW1 TS35CA，另一端接 GND）：
+//  SW1 是点按开关：这里只做消抖，短按切灯效 / 长按切模式由 SystemUpdate() 判定。
 // ============================================================================
 #include <Arduino.h>
 #include "board_config.h"
@@ -160,7 +160,7 @@ void LED_EffectsInit() {
 #endif
     }
     sSwChangeMs = millis();
-    usbLog::printf("[led] effect switch U4 on GPIO%d, initial=%s (raw=%d)\n",
+    usbLog::printf("[led] effect switch SW1 on GPIO%d, initial=%s (raw=%d)\n",
                    LED_EFFECT_SWITCH_PIN,
                    sSwStable ? "closed" : "open",
                    (int)digitalRead(LED_EFFECT_SWITCH_PIN));

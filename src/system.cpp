@@ -3,10 +3,11 @@
 //
 //  模式与操作方式：
 //    正常模式    ：K1~K5 按下即发送当前预设的键值
-//    U4 短按     ：切换灯效（松开时生效）
-//    U4 长按 1 秒：在 正常 <-> 预设切换 之间来回切
+//    SW1 短按     ：切换灯效（松开时生效）
+//    SW1 长按 1 秒：在 正常 <-> 预设切换 之间来回切
 //    预设切换模式里：K1/K2 翻页、K3 确认、K4 声音档位、K5 播放 / 停止音乐，不发送键值
 // ============================================================================
+#include <stdarg.h>
 #include <Arduino.h>
 #include <stdio.h>
 #include <string.h>
@@ -23,7 +24,7 @@
 
 #define SCREEN_DIM_AFTER_MS     20000UL
 #define SCREEN_OFF_AFTER_MS     30000UL
-#define MODE_HOLD_MS            1000    // U4 按住多久算长按（切模式）
+#define MODE_HOLD_MS            1000    // SW1 按住多久算长按（切模式）
 
 // ---- 正常模式的屏幕布局（128x32 = 4 页，每页 8 像素高）----
 //   第 0 页：左上电池图标 + 紧挨着的电池电压（如 3.87V），右上蓝牙图标
@@ -130,10 +131,10 @@ static void drawClaudeLine() {
     if (tlen) DisplayText((uint8_t)(OLED_WIDTH - tlen * 6), CLAUDE_PAGE, tbuf);
 }
 
-// U4（GPIO6）：短按切灯效，长按切模式
-static bool       sU4Down        = false;
-static uint32_t   sU4DownAt      = 0;
-static bool       sU4LongDone    = false;   // 这次按住已经触发过长按，松开时不再算短按
+// SW1（GPIO6）：短按切灯效，长按切模式
+static bool       sSw1Down        = false;
+static uint32_t   sSw1DownAt      = 0;
+static bool       sSw1LongDone    = false;   // 这次按住已经触发过长按，松开时不再算短按
 
 static bool       sK3ShortCut    = false;   // 配置模式里 K3 短按确认
 static uint8_t    sNextSong      = 0;       // 配置模式里 K5 下一次放哪首
@@ -166,7 +167,7 @@ static void notifyModeToLed() {
     LED_EffectsSetMode((uint8_t)sMode);
 }
 
-// U4 长按：正常 <-> 预设切换
+// SW1 长按：正常 <-> 预设切换
 static SystemMode nextMode(SystemMode m) {
     return (m == MODE_NORMAL) ? MODE_KEY_CONFIG : MODE_NORMAL;
 }
@@ -182,8 +183,8 @@ void SystemInit() {
 
     BuzzerSetLevel(SettingsSoundLevel());
 
-    sU4Down     = LED_EffectSwitchClosed();
-    sU4LongDone = true;
+    sSw1Down     = LED_EffectSwitchClosed();
+    sSw1LongDone = true;
 
     usbLog::printf("[sys] boot: mode=%s, preset=%u, battery=%u%%\n",
                    modeName(sMode), (unsigned)(SettingsPresetIndex() + 1),
@@ -212,12 +213,17 @@ void SystemNoteActivity() {
 
 // ---------------------------------------------------------------- 按键事件
 // 按键语义：
-//   · K1~K5 都是按下即生效。模式切换放在 U4 长按上，5 个键没有长按功能，
+//   · K1~K5 都是按下即生效。模式切换放在 SW1 长按上，5 个键没有长按功能，
 //     所以不需要等松开去判断"是不是长按"，5 个键响应速度一致。
 //   · 连发（repeat）只用于预设翻页（K1/K2）。
 //     正常模式下一律不连发（这是快捷键盘，按住不应该刷屏）；确认（K3）也不连发。
 static void onButton(ButtonId id, bool pressed, bool longPress, bool repeat) {
-    if (!pressed || longPress) return;      // 只关心按下和连发；抬起、长按都不用
+    // 松开：正常模式下把这个键释放掉（不管按了多久）
+    if (!pressed) {
+        if (sMode == MODE_NORMAL) SystemSendKeyRelease((uint8_t)id);
+        return;
+    }
+    if (longPress) return;                  // 长按事件不用（按住期间的连发由主机自己做）
 
     SystemNoteActivity();
 
@@ -313,25 +319,25 @@ static void enterMode(SystemMode m) {
 void SystemUpdate() {
     uint32_t now = millis();
 
-    // ---- U4（GPIO6）：短按切灯效，长按 1 秒切模式 ----
+    // ---- SW1（GPIO6）：短按切灯效，长按 1 秒切模式 ----
     //   按下那一刻还不知道是短按还是长按，所以短按在**松开**时才切灯效；
     //   按满 1 秒立刻切模式（会响一声），之后松开不再算短按。
     //   消抖在灯效模块里做，这里读的是消抖后的稳定状态。
 #if LED_EFFECT_SWITCH_PRESENT
     {
         bool closed = LED_EffectSwitchClosed();
-        if (closed && !sU4Down) {
-            sU4Down     = true;
-            sU4DownAt   = now;
-            sU4LongDone = false;
+        if (closed && !sSw1Down) {
+            sSw1Down     = true;
+            sSw1DownAt   = now;
+            sSw1LongDone = false;
             SystemNoteActivity();
-        } else if (closed && !sU4LongDone && (now - sU4DownAt) >= MODE_HOLD_MS) {
-            sU4LongDone = true;
+        } else if (closed && !sSw1LongDone && (now - sSw1DownAt) >= MODE_HOLD_MS) {
+            sSw1LongDone = true;
             enterMode(nextMode(sMode));
             sDispDirty = true;
-        } else if (!closed && sU4Down) {
-            sU4Down = false;
-            if (!sU4LongDone) LED_EffectsNext();
+        } else if (!closed && sSw1Down) {
+            sSw1Down = false;
+            if (!sSw1LongDone) LED_EffectsNext();
         }
     }
 #endif
@@ -417,13 +423,10 @@ void SystemUpdate() {
 }
 
 // ---------------------------------------------------------------- 发送
-// 按键报告是"按下后隔一小段再释放"，所以这里只记账，由 SystemTick 负责释放。
-// 释放延时取值：BLE HID 连接间隔一般 7.5~30ms，留 60ms 保证每次按下都能被主机收到。
-#define KEY_HOLD_MS   60
-
-static uint8_t  sPendingIdx     = 0xFF;   // 当前待发/已发的键号
-static uint32_t sPendingRelease = 0;      // 该释放的时刻，0 = 无
-static bool     sHolding        = false;
+// 按下发"按下"报文，松开才发"释放"报文，和普通键盘一样：
+// 按住期间主机自己做连发（比如按住 Backspace 一直删），连发延迟 / 速度跟系统键盘设置走。
+static uint8_t  sPendingIdx     = 0xFF;   // 按下了、还没发出去的键
+static uint8_t  sHeldIdx        = 0xFF;   // 主机那边正处于"按住"状态的键
 static bool     sReleaseNeeded  = false;  // 有一条"全键释放"报文等着发
 
 void SystemSendKeyPress(uint8_t keyIndex) {
@@ -446,44 +449,32 @@ void SystemSendKeyPress(uint8_t keyIndex) {
     }
     if (isEmpty) return;
 
-    // 上一个键还没释放就先放掉，避免两个键叠在一起
-    if (sHolding && sPendingIdx != 0xFF) {
-        sReleaseNeeded  = true;
-        sPendingIdx     = 0xFF;
-        sHolding        = false;
-        sPendingRelease = millis();          // 让 SystemTick 立刻收尾
-    }
+    // 另一个键还按着就先放掉它（一次只按住一个键，main 里先发释放、再发新键）
+    if (sHeldIdx != 0xFF) sReleaseNeeded = true;
 
-    sPendingIdx     = keyIndex;
-    sPendingRelease = millis() + KEY_HOLD_MS;
-    sHolding        = true;
+    sPendingIdx = keyIndex;
+    sHeldIdx    = keyIndex;
+}
+
+void SystemSendKeyRelease(uint8_t keyIndex) {
+    if (keyIndex != sHeldIdx) return;        // 松开的不是当前按住的那个键（已经被别的键顶掉了）
+    sHeldIdx       = 0xFF;
+    sPendingIdx    = 0xFF;
+    sReleaseNeeded = true;
 }
 
 void SystemSendRelease() {
-    sPendingIdx     = 0xFF;
-    sHolding        = false;
-    sReleaseNeeded  = true;
-    sPendingRelease = millis();              // 立刻收尾
-}
-
-void SystemTick() {
-    if (sPendingRelease == 0) return;
-    if ((int32_t)(millis() - sPendingRelease) < 0) return;
-
-    sPendingRelease = 0;
-    sPendingIdx     = 0xFF;
-    sHolding        = false;
-    sReleaseNeeded  = true;                  // 到点了，该把键放掉
+    sPendingIdx    = 0xFF;
+    sHeldIdx       = 0xFF;
+    sReleaseNeeded = true;
 }
 
 uint8_t SystemPeekPendingKey() {
-    return sHolding ? sPendingIdx : 0xFF;
+    return sPendingIdx;
 }
 
 void SystemCompletePendingKey() {
-    sPendingIdx     = 0xFF;
-    sHolding        = false;
-    sPendingRelease = millis() + KEY_HOLD_MS;
+    sPendingIdx = 0xFF;                      // 已经发出去了；一直按住，直到松开再释放
 }
 
 // main 取走"需要发全键释放"的请求
@@ -509,7 +500,7 @@ void SystemDrawDisplay() {
         // ================= 正常模式：状态行 + 按键弹出 =================
         // 第 0 行： 电池图标 + 电压（左）+ 蓝牙图标（右）
         // 其余全部留空。只有按下 K1~K5 时，才在屏幕上打出触发的键名，1.5 秒后消失。
-        // 切换灯效（U4）不产生任何屏幕变化 —— 灯本身就是反馈，屏幕不用重复一遍。
+        // 切换灯效（SW1）不产生任何屏幕变化 —— 灯本身就是反馈，屏幕不用重复一遍。
         case MODE_NORMAL: {
             drawStatusRow();
 
@@ -572,6 +563,7 @@ static void serialHelp() {
         " c      进键位预设切换模式\n"
         " v      切换“有没有装电池”（没装时电池图标空心，不显示假电量）\n"
         " s      打印状态（模式/预设/电量/连接）\n"
+        " b      打印蓝牙状态（连接数、加密、广播、蓝牙串口订阅）\n"
         " d      OLED 探活 + 冻结屏幕画图标和四角标记（观察是否位移）\n"
         " F      解除 / 恢复屏幕冻结\n"
         " P      自动模拟按键弹出 5 次（看文字左边缘是否固定）\n"
@@ -601,7 +593,9 @@ static void serialDumpPreset() {
 }
 
 // ---------------------------------------------------------------- 上位机改键协议
-// 给 tools/keymap.html（浏览器 Web Serial）用的行协议。
+// 给 tools/keymap.html / tools/claude_status.py 用的行协议。
+// 两个通道都能用：USB 串口，以及蓝牙 NUS（Nordic UART Service）。
+// 每个通道各有一份行缓冲，回复发回命令来的那个通道。
 // 以 '@' 开头、以换行结尾的一行是一条命令；不以 '@' 开头的字符仍按单键诊断命令处理。
 // 回复也以 '@' 开头，网页据此把它和普通日志区分开。
 //
@@ -624,10 +618,54 @@ static void serialDumpPreset() {
 #define HOST_PROTO_VERSION  1
 #define HOST_LINE_CAP       320
 
-static char     sHostLine[HOST_LINE_CAP];
-static uint16_t sHostLen   = 0;
-static bool     sHostInLine = false;
-static bool     sHostOverflow = false;
+struct HostChan {
+    char     line[HOST_LINE_CAP];
+    uint16_t len;
+    bool     inLine;
+    bool     overflow;
+    void   (*out)(const char *s, size_t n);   // 回复往哪写
+};
+
+static void usbOut(const char *s, size_t n) { usbLog::write(s, n); }
+
+// 蓝牙通道：主循环里攒满一行（或攒到 200 字节）再整包发，避免一个十六进制片段就发一个通知
+static int    (*sBleRead)()                        = nullptr;
+static size_t (*sBleWrite)(const uint8_t *, size_t) = nullptr;
+static char     sBleOutBuf[200];
+static size_t   sBleOutLen = 0;
+static void bleFlush() {
+    if (sBleOutLen && sBleWrite) sBleWrite((const uint8_t *)sBleOutBuf, sBleOutLen);
+    sBleOutLen = 0;
+}
+static void bleOut(const char *s, size_t n) {
+    for (size_t i = 0; i < n; i++) {
+        sBleOutBuf[sBleOutLen++] = s[i];
+        if (s[i] == '\n' || sBleOutLen == sizeof(sBleOutBuf)) bleFlush();
+    }
+}
+
+static HostChan  sUsbChan = {{0}, 0, false, false, usbOut};
+static HostChan  sBleChan = {{0}, 0, false, false, bleOut};
+static HostChan *sOut     = &sUsbChan;   // 当前这条命令的回复通道
+
+static void hostWrite(const char *s, size_t n) { sOut->out(s, n); }
+static void hostPrint(const char *s) { hostWrite(s, strlen(s)); }
+static void hostPrintf(const char *fmt, ...) {
+    char buf[160];
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    if (n > 0) hostWrite(buf, (size_t)n < sizeof(buf) ? (size_t)n : sizeof(buf) - 1);
+}
+
+static void (*sBleDump)() = nullptr;
+void SystemSetBleDump(void (*dumpFn)()) { sBleDump = dumpFn; }
+
+void SystemSetBleSerial(int (*readFn)(), size_t (*writeFn)(const uint8_t *, size_t)) {
+    sBleRead  = readFn;
+    sBleWrite = writeFn;
+}
 
 static const char HEXDIG[] = "0123456789ABCDEF";
 
@@ -637,24 +675,24 @@ static void hostPrintHex(const uint8_t *data, size_t n) {
     for (size_t i = 0; i < n; i++) {
         buf[k++] = HEXDIG[data[i] >> 4];
         buf[k++] = HEXDIG[data[i] & 0x0F];
-        if (k >= sizeof(buf) - 2) { usbLog::write(buf, k); k = 0; }
+        if (k >= sizeof(buf) - 2) { hostWrite(buf, k); k = 0; }
     }
-    if (k) usbLog::write(buf, k);
+    if (k) hostWrite(buf, k);
 }
 
 static void hostPrintStr(const char *s) {
-    usbLog::print(" ");
-    if (s[0] == 0) { usbLog::print("-"); return; }
+    hostPrint(" ");
+    if (s[0] == 0) { hostPrint("-"); return; }
     hostPrintHex((const uint8_t *)s, strlen(s));
 }
 
 static void hostSendPreset(uint8_t i) {
     const KeyPreset &p = SettingsPreset(i);
-    usbLog::printf("@P %u %u ", (unsigned)i, p.isMedia ? 1u : 0u);
+    hostPrintf("@P %u %u ", (unsigned)i, p.isMedia ? 1u : 0u);
     hostPrintHex(&p.keymap[0][0], sizeof(p.keymap));
     hostPrintStr(p.name);
     for (uint8_t k = 0; k < KEY_COUNT; k++) hostPrintStr(p.keyDesc[k]);
-    usbLog::print("\n");
+    hostPrint("\n");
 }
 
 static int hexVal(char c) {
@@ -748,70 +786,75 @@ static void hostHandleLine(char *line) {
     const char *cmd = tok[0];
 
     if (strcmp(cmd, "HELLO") == 0) {
-        usbLog::printf("@HELLO KEYBRICK %d %d %d %u\n", HOST_PROTO_VERSION, PRESET_COUNT, KEY_COUNT,
+        hostPrintf("@HELLO KEYBRICK %d %d %d %u\n", HOST_PROTO_VERSION, PRESET_COUNT, KEY_COUNT,
                        (unsigned)SettingsPresetIndex());
     } else if (strcmp(cmd, "GET") == 0) {
         for (uint8_t i = 0; i < PRESET_COUNT; i++) hostSendPreset(i);
-        usbLog::print("@END\n");
+        hostPrint("@END\n");
     } else if (strcmp(cmd, "SET") == 0) {
-        if (nt != 10) { usbLog::print("@ERR SET 参数个数不对\n"); return; }
+        if (nt != 10) { hostPrint("@ERR SET 参数个数不对\n"); return; }
         int idx = atoi(tok[1]);
-        if (idx < 0 || idx >= PRESET_COUNT) { usbLog::print("@ERR SET 预设号越界\n"); return; }
+        if (idx < 0 || idx >= PRESET_COUNT) { hostPrint("@ERR SET 预设号越界\n"); return; }
         KeyPreset p;
         memset(&p, 0, sizeof(p));
         p.isMedia = (atoi(tok[2]) != 0);
         if (hexDecode(tok[3], &p.keymap[0][0], sizeof(p.keymap)) != (int)sizeof(p.keymap)) {
-            usbLog::print("@ERR SET 键值格式不对\n"); return;
+            hostPrint("@ERR SET 键值格式不对\n"); return;
         }
-        if (!hexToText(tok[4], p.name, sizeof(p.name))) { usbLog::print("@ERR SET 预设名太长或格式不对\n"); return; }
+        if (!hexToText(tok[4], p.name, sizeof(p.name))) { hostPrint("@ERR SET 预设名太长或格式不对\n"); return; }
         for (uint8_t k = 0; k < KEY_COUNT; k++) {
             if (!hexToText(tok[5 + k], p.keyDesc[k], sizeof(p.keyDesc[k]))) {
-                usbLog::printf("@ERR SET K%u 说明太长或格式不对\n", (unsigned)(k + 1)); return;
+                hostPrintf("@ERR SET K%u 说明太长或格式不对\n", (unsigned)(k + 1)); return;
             }
         }
         SettingsUpdatePreset((uint8_t)idx, p);
         sDispDirty = true;
-        usbLog::printf("@OK SET %d\n", idx);
+        hostPrintf("@OK SET %d\n", idx);
     } else if (strcmp(cmd, "SAVE") == 0) {
-        usbLog::print(SettingsSavePresets() ? "@OK SAVE\n" : "@ERR SAVE 写入 flash 失败\n");
+        hostPrint(SettingsSavePresets() ? "@OK SAVE\n" : "@ERR SAVE 写入 flash 失败\n");
     } else if (strcmp(cmd, "RESET") == 0) {
         SettingsResetPresets();
         sDispDirty = true;
-        usbLog::print("@OK RESET\n");
+        hostPrint("@OK RESET\n");
     } else if (strcmp(cmd, "CLAUDE") == 0) {
         if (nt < 2 || !claudeSet(tok[1], nt >= 3 ? tok[2] : "")) {
-            usbLog::print("@ERR CLAUDE 状态只能是 off/idle/work/tool/wait/done\n"); return;
+            hostPrint("@ERR CLAUDE 状态只能是 off/idle/work/tool/wait/done\n"); return;
         }
-        usbLog::print("@OK CLAUDE\n");
+        hostPrint("@OK CLAUDE\n");
     } else if (strcmp(cmd, "USE") == 0) {
         int idx = (nt >= 2) ? atoi(tok[1]) : -1;
-        if (idx < 0 || idx >= PRESET_COUNT) { usbLog::print("@ERR USE 预设号越界\n"); return; }
+        if (idx < 0 || idx >= PRESET_COUNT) { hostPrint("@ERR USE 预设号越界\n"); return; }
         SettingsSetPresetIndex((uint8_t)idx, true);
         sDispDirty = true;
-        usbLog::printf("@OK USE %d\n", idx);
+        hostPrintf("@OK USE %d\n", idx);
     } else {
-        usbLog::printf("@ERR 未知命令 %s\n", cmd);
+        hostPrintf("@ERR 未知命令 %s\n", cmd);
     }
 }
 
 // 把一个字符喂给行协议。返回 true 表示这个字符被行协议吃掉了（不要再当单键命令）
-static bool hostFeed(int c) {
-    if (!sHostInLine) {
+static bool hostFeed(HostChan &ch, int c) {
+    if (!ch.inLine) {
         if (c != '@') return false;
-        sHostInLine   = true;
-        sHostLen      = 0;
-        sHostOverflow = false;
+        ch.inLine   = true;
+        ch.len      = 0;
+        ch.overflow = false;
         return true;
     }
     if (c == '\r' || c == '\n') {
-        sHostInLine = false;
-        if (sHostOverflow) { usbLog::print("@ERR 命令太长\n"); return true; }
-        sHostLine[sHostLen] = 0;
-        hostHandleLine(sHostLine);
+        ch.inLine = false;
+        sOut = &ch;
+        if (ch.overflow) { hostPrint("@ERR 命令太长\n"); }
+        else {
+            ch.line[ch.len] = 0;
+            hostHandleLine(ch.line);
+        }
+        if (&ch == &sBleChan) bleFlush();
+        sOut = &sUsbChan;
         return true;
     }
-    if (sHostLen < HOST_LINE_CAP - 1) sHostLine[sHostLen++] = (char)c;
-    else                              sHostOverflow = true;
+    if (ch.len < HOST_LINE_CAP - 1) ch.line[ch.len++] = (char)c;
+    else                            ch.overflow = true;
     return true;
 }
 
@@ -872,7 +915,7 @@ static void serialCommand(char c) {
                                        (unsigned)((GPIO.out.val >> p) & 1u));
                     }
 #if LED_EFFECT_SWITCH_PRESENT
-                    usbLog::printf("  pin%-2u (灯效开关 U4) in=%u -> %s\n",
+                    usbLog::printf("  pin%-2u (灯效开关 SW1) in=%u -> %s\n",
                                    LED_EFFECT_SWITCH_PIN,
                                    (unsigned)((GPIO.in.val >> LED_EFFECT_SWITCH_PIN) & 1u),
                                    LED_EffectSwitchClosed() ? "closed" : "open");
@@ -888,12 +931,12 @@ static void serialCommand(char c) {
                                (unsigned)LED_EffectsCount(),
                                LED_EffectsName(LED_EffectsGet()));
 #if LED_EFFECT_SWITCH_PRESENT
-                usbLog::printf("      switch U4 on GPIO%d: raw=%d closed=%d toggles=%u\n",
+                usbLog::printf("      switch SW1 on GPIO%d: raw=%d closed=%d toggles=%u\n",
                                LED_EFFECT_SWITCH_PIN,
                                (int)digitalRead(LED_EFFECT_SWITCH_PIN),
                                LED_EffectSwitchClosed() ? 1 : 0,
                                (unsigned)LED_EffectSwitchToggleCount());
-                usbLog::print("      （每按一下 U4，toggles 应该 +1；短按切灯效，长按 1 秒切模式）\n");
+                usbLog::print("      （每按一下 SW1，toggles 应该 +1；短按切灯效，长按 1 秒切模式）\n");
 #endif
                 break;
 
@@ -982,6 +1025,7 @@ static void serialCommand(char c) {
             case 'o': LED_PowerRailOn();  usbLog::print("[led] rail ON\n");  break;
             case 'f': LED_PowerRailOff(); usbLog::print("[led] rail OFF\n"); break;
 
+            case 'b': if (sBleDump) sBleDump(); break;
             case '?': case 'h': serialHelp(); break;
 
             default:
@@ -1005,7 +1049,7 @@ void SystemHandleSerial() {
     for (uint8_t n = 0; n < 64; n++) {
         int c = usbLog::read();
         if (c < 0) break;
-        if (hostFeed(c)) continue;          // '@' 开头的一行交给上位机协议
+        if (hostFeed(sUsbChan, c)) continue;   // '@' 开头的一行交给上位机协议
         if (c == '\r' || c == '\n') { sawNewline = true; continue; }
         if (nStray == 0) stray = (char)c;
         if (nStray < 255) nStray++;
@@ -1014,5 +1058,14 @@ void SystemHandleSerial() {
         serialCommand(stray);
     } else if (nStray > 1) {
         usbLog::printf("[serial] ignored %u stray chars\n", (unsigned)nStray);
+    }
+
+    // 蓝牙 NUS：只认 '@' 开头的行协议，单键诊断命令只走 USB
+    if (sBleRead) {
+        for (uint16_t n = 0; n < 256; n++) {
+            int c = sBleRead();
+            if (c < 0) break;
+            hostFeed(sBleChan, c);
+        }
     }
 }

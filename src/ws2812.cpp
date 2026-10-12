@@ -89,13 +89,6 @@ bool Ws2812::begin() {
     return true;
 }
 
-void Ws2812::end() {
-    if (_begun) {
-        rmt_driver_uninstall(_channel);
-        _begun = false;
-    }
-    freeBufs();
-}
 
 void Ws2812::setPixel(uint16_t i, uint8_t r, uint8_t g, uint8_t b) {
     if (_buf == nullptr || i >= _count) return;

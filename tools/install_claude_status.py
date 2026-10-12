@@ -9,7 +9,7 @@ install_claude_status.py -- 一键安装 / 卸载 "Claude Code 状态 -> Keybric
     python install_claude_status.py --test      只发一遍测试状态
 
 它会：
-  1. 检查 pyserial，没有就用当前 Python 自动安装（pip --user）；
+  1. 检查 pyserial（必需）和 bleak（可选，没插线时走蓝牙），没有就用当前 Python 自动安装（pip --user）；
   2. 把同目录的 claude_status.py 复制到 ~/.claude/keybrick/（之后可以删掉项目目录）；
   3. 把 7 个 hook 合并进 ~/.claude/settings.json：
        - 只增删本工具自己的条目，其它设置和别的 hook 原样保留；
@@ -18,7 +18,7 @@ install_claude_status.py -- 一键安装 / 卸载 "Claude Code 状态 -> Keybric
   4. 给键盘发一遍测试状态，确认能收到。
 
 安装后 Claude Code 不用重启，下一次事件就生效；在 Claude Code 里输入 /hooks 可以查看或停用。
-本脚本只需要 Python 3.7+ 标准库（pyserial 会自动装）。
+本脚本只需要 Python 3.7+ 标准库（pyserial、bleak 会自动装）。
 """
 import json
 import os
@@ -58,31 +58,43 @@ def posix(path):
     return path.replace("\\", "/")
 
 
-# ---------------------------------------------------------------------------- pyserial
-def ensure_pyserial():
-    try:
-        import serial  # noqa: F401
-        say("[1/4] pyserial 已安装")
-        return True
-    except ImportError:
-        pass
-    say("[1/4] 正在安装 pyserial ...")
-    cmd = [sys.executable, "-m", "pip", "install", "--user", "--quiet", "pyserial"]
-    r = subprocess.run(cmd)
+# ---------------------------------------------------------------------------- 依赖
+def pip_install(pkg):
+    r = subprocess.run([sys.executable, "-m", "pip", "install", "--user", "--quiet", pkg])
     if r.returncode != 0:            # 虚拟环境里不允许 --user，去掉再试一次
-        r = subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", "pyserial"])
-    try:
-        import importlib
-        importlib.invalidate_caches()
-        import serial  # noqa: F401
+        subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", pkg])
+    import importlib
+    importlib.invalidate_caches()
+
+
+def has_module(name):
+    import importlib.util
+    return importlib.util.find_spec(name) is not None
+
+
+def ensure_deps():
+    """pyserial 必需（USB）；bleak 可选（没插线时走蓝牙），装不上也不影响 USB。"""
+    if has_module("serial"):
+        say("[1/4] pyserial 已安装")
+    else:
+        say("[1/4] 正在安装 pyserial ...")
+        pip_install("pyserial")
+        if not has_module("serial"):
+            say("      !! pyserial 安装失败，请手动执行：%s -m pip install pyserial" % sys.executable)
+            return False
         say("      pyserial 安装完成")
-        return True
-    except ImportError:
-        say("      !! pyserial 安装失败，请手动执行：%s -m pip install pyserial" % sys.executable)
-        return False
+    if has_module("bleak"):
+        say("      bleak 已安装（没插线时走蓝牙）")
+    else:
+        say("      正在安装 bleak（可选，用于没插线时走蓝牙）...")
+        pip_install("bleak")
+        if has_module("bleak"):
+            say("      bleak 安装完成")
+        else:
+            say("      bleak 没装上，只能走 USB；需要蓝牙时手动执行：%s -m pip install bleak" % sys.executable)
+    return True
 
 
-# ---------------------------------------------------------------------------- settings.json
 def load_settings():
     if not os.path.exists(SETTINGS):
         return {}
@@ -190,7 +202,7 @@ def install():
     if not os.path.exists(SRC_SCRIPT):
         say("!! 找不到 %s：请把 claude_status.py 和本脚本放在同一个目录" % SRC_SCRIPT)
         sys.exit(1)
-    if not ensure_pyserial():
+    if not ensure_deps():
         sys.exit(1)
 
     os.makedirs(INSTALL_DIR, exist_ok=True)

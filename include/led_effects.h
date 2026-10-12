@@ -4,9 +4,9 @@
 //  连接状态优先（盖住灯效模式）：
 //    - 还没连上蓝牙（上电 / 广播中 / 断线）：5 颗灯黄色一起明暗呼吸
 //    - 刚连上：5 颗灯绿色闪 2 下，然后交给当前灯效模式
-//    （没连上时按 U4 切灯效，会先预览新灯效 3 秒，再回到黄色呼吸）
+//    （没连上时按 SW1 切灯效，会先预览新灯效 3 秒，再回到黄色呼吸）
 //
-//  灯效模式：GPIO6 上的 U4 短按循环切换（长按是切系统模式），上电默认第 1 个（按键反馈）。
+//  灯效模式：GPIO6 上的 SW1 短按循环切换（长按是切系统模式），上电默认第 1 个（按键反馈）。
 //
 //  叠加在最上面的：
 //    - 按下的那颗灯亮一下再渐暗（所有灯效都有）
@@ -26,7 +26,7 @@ enum LedLinkState {
     LED_LINK_CONNECTED,     // 已连接
 };
 
-// 灯效模式（GPIO6 上的开关 U4 循环切换）
+// 灯效模式（GPIO6 上的开关 SW1 循环切换）
 enum LedEffect {
     LED_FX_KEYS = 0,        // 默认：全灭，只有按下的键亮一下再渐暗
     LED_FX_WHITE,           // 白色常亮
@@ -70,6 +70,6 @@ uint8_t LED_EffectsGet();
 const char* LED_EffectsName(uint8_t fx);
 uint8_t LED_EffectsCount();
 
-// 开关 U4 的实时状态，用于诊断（确认接法是否符合预期）
+// 开关 SW1 的实时状态，用于诊断（确认接法是否符合预期）
 bool     LED_EffectSwitchClosed();              // 当前是否"闭合/接通"
-uint16_t LED_EffectSwitchToggleCount();         // 上电以来 U4 被按了多少次
+uint16_t LED_EffectSwitchToggleCount();         // 上电以来 SW1 被按了多少次

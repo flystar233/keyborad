@@ -16,7 +16,7 @@
 // ============================================================================
 #include <Arduino.h>
 
-#include "Hid2Ble.h"
+#include "BleKeyboard.h"
 
 #include "board_config.h"
 #include "usb_log.h"
@@ -29,7 +29,7 @@
 #include "system.h"
 
 // BLE HID 设备
-static Hid2Ble sKeyboard(BLE_DEVICE_NAME, BLE_DEVICE_MANUFACTURER, 100);
+static BleKeyboard sKeyboard(BLE_DEVICE_NAME, BLE_DEVICE_MANUFACTURER, 100);
 
 // 上一轮的连接状态，用于检测边沿
 static bool sWasConnected = false;
@@ -83,14 +83,15 @@ void setup() {
     SystemInit();
 
     // ---- BLE 键盘 ----
-    // 放在灯效自检之前：begin() 只是起一个任务异步搭 BLE 栈，自检那 1 秒
-    // 正好让它在后台跑，开机后能更早被连上。
-    // 【重要】begin() 只是创建一个 FreeRTOS 任务去异步搭 BLE 栈，
-    // hid / inputKeyboard 要等那个任务跑完才有值。所以：
-    //   - 库内部用 ready 标志保护了 setBatteryLevel / send2Ble / isConnected，
-    //     在 begin() 之前或之后立刻调用都不会再空指针崩溃。
-    //   - 灯效的"正在广播"状态要等 isReady() 才切，否则会误导（看着在闪其实还没广播）。
+    // 放在灯效自检之前：begin() 建好 NimBLE 栈就开始广播，自检那 1 秒里主机就能连上。
+    // 库内部用 ready 标志保护了 setBatteryLevel / sendKeyReport / isConnected，
+    // 在 begin() 之前调用也不会碰到空指针。
+    BleKeyboard::setLogger([](const char *line) { usbLog::print(line); });
     sKeyboard.begin();
+    // 蓝牙 NUS 串口接到上位机行协议（改键网页 / Claude 状态都能走蓝牙）
+    SystemSetBleDump([]() { sKeyboard.dumpStatus(); });
+    SystemSetBleSerial([]() { return sKeyboard.serialRead(); },
+                       [](const uint8_t *d, size_t n) { return sKeyboard.serialWrite(d, n); });
     sKeyboard.setBatteryLevel(BatteryPercent());
     LED_EffectsSetLink(LED_LINK_OFF);
     usbLog::printf("[ble] advertising as \"%s\"\n", BLE_DEVICE_NAME);
@@ -112,7 +113,7 @@ void loop() {
     SystemHandleSerial();
 
     // 3) BLE 连接状态
-    //    isReady() 之前 BLE 栈还在另一个任务里搭建，此时 isConnected() 恒为 false。
+    //    "已连接"以加密成功为准（见 BleKeyboard.cpp），只连上没加密的链路不算。
     static bool sLinkShown = false;
     bool connected = sKeyboard.isConnected();
 
@@ -144,8 +145,8 @@ void loop() {
     }
 
     // 断开后重启广播。
-    // 【关键】这里调 reAdvertise() 而不是 begin()：begin() 会再建一个任务并
-    // 重新执行 BLEDevice::init() + createServer()，导致重复初始化、内存耗尽。
+    // NimBLE 断开后本来就会自动重新广播（advertiseOnDisconnect），这里是兜底；
+    // reAdvertise() 正在广播时什么也不做。不要再调 begin()，BLE 栈只能初始化一次。
     if (!connected && sDisconnectedAt != 0 && (int32_t)(millis() - sDisconnectedAt) >= 0) {
         sDisconnectedAt = 0;
         sKeyboard.reAdvertise();
@@ -159,25 +160,24 @@ void loop() {
     BuzzerUpdate();
     SystemUpdate();
 
-    // 5) 键盘报文发送：按下 -> 隔 60ms -> 释放（时序由系统层记账）
-    //    先发释放、再发按下：连续快按时，上一个键的释放请求和新键的按下会在同一轮里
-    //    出现，顺序反了的话新键刚按下就被这条释放取消掉。
-    SystemTick();
+    // 5) 键盘报文发送：按下发按下报文，松开才发释放报文（按住时主机自己连发）
+    //    先发释放、再发按下：按住一个键时又按了另一个键，旧键的释放请求和新键的按下会在
+    //    同一轮里出现，顺序反了的话新键刚按下就被这条释放取消掉。
     if (connected) {
         if (SystemTakeReleaseRequest()) {
-            sKeyboard.send2Ble((char *)HID_RELEASE);
+            sKeyboard.sendKeyReport((char *)HID_RELEASE);
             if (sMediaHeld) {
-                sKeyboard.sendMedia2Ble((char *)HID_RELEASE);
+                sKeyboard.sendMediaReport((char *)HID_RELEASE);
                 sMediaHeld = false;
             }
         }
         uint8_t k = SystemPeekPendingKey();
         if (k != 0xFF) {
             if (SettingsCurrentPreset().isMedia) {
-                sKeyboard.sendMedia2Ble((char *)SettingsKeyReport(k));
+                sKeyboard.sendMediaReport((char *)SettingsKeyReport(k));
                 sMediaHeld = true;
             } else {
-                sKeyboard.send2Ble((char *)SettingsKeyReport(k));
+                sKeyboard.sendKeyReport((char *)SettingsKeyReport(k));
             }
             SystemCompletePendingKey();
         }

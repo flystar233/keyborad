@@ -24,12 +24,12 @@ typedef struct {
     char    name[20];                           // 预设名（显示在 OLED 上）
     char    keyDesc[KEY_COUNT][16];             // 每个键的说明文字
     // true = 这组是媒体键：keymap[i] 的前 2 字节是 Consumer Control 位图
-    //        （见 lib/hid2ble/Hid2Ble.cpp 报告描述符），走 sendMedia2Ble() 发送。
+    //        （见 lib/ble_keyboard/BleKeyboard.cpp 报告描述符），走 sendMediaReport() 发送。
     //        音量 / 播放这些键不在键盘页里，用普通键盘报文发是没有用的。
     bool    isMedia;
 } KeyPreset;
 
-// Consumer Control 位图（第 0 字节），与 Hid2Ble.cpp 报告描述符的顺序一致
+// Consumer Control 位图（第 0 字节），与 BleKeyboard.cpp 报告描述符的顺序一致
 #define MEDIA_NEXT_TRACK   0x01
 #define MEDIA_PREV_TRACK   0x02
 #define MEDIA_STOP         0x04

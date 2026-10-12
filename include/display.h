@@ -27,12 +27,9 @@ bool DisplayPing();
 void DisplayScanBus();
 
 void DisplayClear();
-void DisplayClearRect(uint8_t x, uint8_t page, uint8_t w, uint8_t hPages);
 
 // 6x8 字体：x、page 定位；不会画到屏幕外
 void DisplayText(uint8_t x, uint8_t page, const char *str);
-// 居中显示（6px/字符）
-void DisplayTextCentered(uint8_t page, const char *str);
 
 // ---------------------------------------------------------------- 图元（画图标用，不依赖字体）
 // x, y 是全屏像素坐标（x 0..127，y 0..31），内部自动换算到页

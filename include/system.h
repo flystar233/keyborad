@@ -14,13 +14,16 @@ enum SystemMode {
 };
 
 void SystemInit();
-void SystemUpdate();                    // 主循环调用：U4 短按/长按、预设确认、息屏
+// 蓝牙 NUS 串口：读一个字节（没有返回 -1）/ 发数据。由 main.cpp 接到 BleKeyboard 上
+void SystemSetBleSerial(int (*readFn)(), size_t (*writeFn)(const uint8_t *, size_t));
+// 串口命令 b：打印蓝牙状态。由 main.cpp 接到 BleKeyboard::dumpStatus
+void SystemSetBleDump(void (*dumpFn)());
+void SystemUpdate();                    // 主循环调用：SW1 短按/长按、预设确认、息屏
 
 // 按键事件入口（main 把它注册给 ButtonsInit）
 void SystemHandleButtonEvent(ButtonId id, bool pressed, bool longPress, bool repeat);
 
 // 键盘报文的 press/release 时序：main 每轮调一次
-void    SystemTick();
 uint8_t SystemPeekPendingKey();         // 0xFF = 当前没有待发键
 void    SystemCompletePendingKey();
 bool    SystemTakeReleaseRequest();     // true = 需要发一条"全键释放"
@@ -37,8 +40,9 @@ bool SystemDisplayDirty();
 // 内容变了就重画并刷屏；被刷屏限流挡回来时保留脏标记，下一轮自动重试
 void SystemRefreshDisplay();
 
-// 发送一个键的按下（内部记账，由 SystemTick 负责释放）
+// 发送一个键的按下；松开时调 SystemSendKeyRelease，主机按住期间自己连发
 void SystemSendKeyPress(uint8_t keyIndex);
+void SystemSendKeyRelease(uint8_t keyIndex);
 void SystemSendRelease();
 
 // 有按键活动 -> 唤醒屏幕、重置息屏计时

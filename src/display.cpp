@@ -93,14 +93,6 @@ void DisplayClear() {
     memset(sFb, 0, sizeof(sFb));
 }
 
-void DisplayClearRect(uint8_t x, uint8_t page, uint8_t w, uint8_t hPages) {
-    if (x >= OLED_WIDTH) return;
-    if (x + w > OLED_WIDTH) w = OLED_WIDTH - x;
-    if (page + hPages > PAGES) hPages = PAGES - page;
-    for (uint8_t p = page; p < (uint8_t)(page + hPages); p++) {
-        memset(&sFb[p * OLED_WIDTH + x], 0, w);
-    }
-}
 
 // 单个字符：6 列，低位在上（bit0 = 页内最上面的像素）
 static void drawChar(uint8_t x, uint8_t page, uint8_t ch) {
@@ -125,13 +117,6 @@ void DisplayText(uint8_t x, uint8_t page, const char *str) {
     }
 }
 
-void DisplayTextCentered(uint8_t page, const char *str) {
-    if (str == nullptr) return;
-    size_t len = strlen(str);
-    uint16_t w = (uint16_t)(len * FONT_W);
-    uint8_t  x = (w >= OLED_WIDTH) ? 0 : (uint8_t)((OLED_WIDTH - w) / 2);
-    DisplayText(x, page, str);
-}
 
 // ---------------------------------------------------------------- 图元 / 图标
 void DisplayPixel(uint8_t x, uint8_t y) {

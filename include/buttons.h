@@ -46,7 +46,4 @@ void ButtonsInit(ButtonCallback cb);
 void ButtonsPoll();
 
 bool ButtonsIsDownRaw(uint8_t idx);
-inline bool ButtonIsDown(ButtonId id) { return ButtonsIsDownRaw((uint8_t)id); }
 
-// 是否有任何键处于按下状态（用于"有操作就唤醒屏幕"）
-bool ButtonsAnyDown();

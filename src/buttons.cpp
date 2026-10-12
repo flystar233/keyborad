@@ -92,9 +92,3 @@ bool ButtonsIsDownRaw(uint8_t idx) {
     return sBtn[idx].stable == 0;
 }
 
-bool ButtonsAnyDown() {
-    for (uint8_t i = 0; i < BUTTON_COUNT; i++) {
-        if (sBtn[i].stable == 0) return true;
-    }
-    return false;
-}
