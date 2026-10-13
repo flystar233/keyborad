@@ -198,6 +198,8 @@ void SystemSetLink(LedLinkState st) {
 }
 
 
+uint32_t SystemLastActivityMs() { return sLastActivity; }
+
 void SystemNoteActivity() {
     sLastActivity = millis();
     if (!sScreenOn) {

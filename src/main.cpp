@@ -15,6 +15,8 @@
 //      日志走 UART0 会抢走这两个脚 -> K3 读不到、灯珠永远没电。
 // ============================================================================
 #include <Arduino.h>
+#include <esp_sleep.h>
+#include "soc/usb_serial_jtag_struct.h"
 
 #include "BleKeyboard.h"
 
@@ -23,6 +25,7 @@
 #include "buttons.h"
 #include "display.h"
 #include "led_effects.h"
+#include "ws2812.h"
 #include "buzzer.h"
 #include "battery.h"
 #include "settings.h"
@@ -42,6 +45,37 @@ static uint32_t sDisconnectedAt = 0;
 #define RECONNECT_DELAY_MS   3000UL
 
 // ---------------------------------------------------------------------------
+//  自动休眠
+// ---------------------------------------------------------------------------
+// USB 是不是插在电脑上：电脑每 1ms 发一个 SOF 帧，帧号一直在变；只插充电器、电脑睡眠时帧号不动
+static bool usbHostPresent() {
+    static uint16_t lastFrame  = 0;
+    static uint32_t lastChange = 0;
+    uint16_t f = USB_SERIAL_JTAG.fram_num.sof_frame_index;
+    if (f != lastFrame) { lastFrame = f; lastChange = millis(); }
+    return lastChange != 0 && millis() - lastChange < 500;
+}
+
+static void enterDeepSleep() {
+    usbLog::print("[pwr] 蓝牙 1 分钟没连上、也没人按键 -> 深度睡眠（按 K1 / K2 唤醒）\n");
+    BuzzerStop();
+    // 屏幕提示一下再关
+    DisplaySetPower(true);
+    DisplayClear();
+    DisplayText(0, 0, "Sleeping...");
+    DisplayText(0, 2, "Press K1/K2 to wake");
+    DisplayFlush(true);
+    delay(1500);
+    DisplaySetPower(false);         // SSD1306 进睡眠，约 10uA
+    LED_PowerRailOff();             // 灯珠断电；睡眠时 GPIO21 释放，靠板上 10K 上拉保持关断
+    // 唤醒脚还按着就先等松开，否则一睡下去马上又被唤醒
+    while (digitalRead(BTN1_PIN) == LOW || digitalRead(BTN2_PIN) == LOW) delay(10);
+    // 低电平唤醒；K1 用芯片内部上拉（睡眠时由唤醒配置自动保持），K2 板上有 10K 上拉
+    esp_deep_sleep_enable_gpio_wakeup((1ULL << BTN1_PIN) | (1ULL << BTN2_PIN), ESP_GPIO_WAKEUP_GPIO_LOW);
+    esp_deep_sleep_start();         // 不会返回：醒来是从头重启
+}
+
+// ---------------------------------------------------------------------------
 //  按键事件 -> 交给系统层
 // ---------------------------------------------------------------------------
 static void onButtonEvent(ButtonId id, bool pressed, bool longPress, bool repeat) {
@@ -53,6 +87,8 @@ void setup() {
     // 日志通道必须在最前面：后面每一步都要打日志
     usbLog::begin();
     usbLog::print("\n\n=== ESP32-C3 BLE Keybrick booting ===\n");
+    const bool wokeFromSleep = (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_GPIO);
+    if (wokeFromSleep) usbLog::print("[pwr] 按键唤醒（从深度睡眠）\n");
     usbLog::printf("[sys] chip=%s cores=%d flash=%luKB heap=%lu\n",
                    ESP.getChipModel(), ESP.getChipCores(),
                    (unsigned long)(ESP.getFlashChipSize() / 1024),
@@ -97,10 +133,11 @@ void setup() {
     usbLog::printf("[ble] advertising as \"%s\"\n", BLE_DEVICE_NAME);
 
     // ---- 灯效自检：红 -> 绿 -> 蓝 -> 白，确认 5 颗灯、线序、颜色都对 ----
-    LED_EffectsSelfTest();
+    // 从休眠唤醒时跳过自检和开机音，尽快回连
+    if (!wokeFromSleep) LED_EffectsSelfTest();
 
     SystemNoteActivity();
-    BuzzerStartup();            // 开机音：自检之后再响，BuzzerUpdate() 在主循环里推进
+    if (!wokeFromSleep) BuzzerStartup();   // 开机音：自检之后再响，BuzzerUpdate() 在主循环里推进
     usbLog::print("[sys] ready. 串口敲 ? 看诊断命令\n");
 }
 
@@ -159,6 +196,15 @@ void loop() {
         LED_EffectsSetLink(LED_LINK_ADVERTISING);
         SystemSetLink(LED_LINK_ADVERTISING);
     }
+
+#if AUTO_SLEEP_ENABLED
+    // 自动休眠：没连蓝牙、USB 没插电脑、也没人按键，满 AUTO_SLEEP_MS 就睡
+    static uint32_t sLinkedAt = 0;               // 最近一次"不该睡"的时刻
+    if (connected || usbHostPresent()) sLinkedAt = millis();
+    uint32_t since = SystemLastActivityMs();
+    if ((int32_t)(sLinkedAt - since) > 0) since = sLinkedAt;
+    if (millis() - since >= AUTO_SLEEP_MS) enterDeepSleep();
+#endif
 
     // 4) 周期任务
     BatteryUpdate();

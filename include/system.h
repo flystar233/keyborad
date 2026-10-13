@@ -47,6 +47,7 @@ void SystemSendRelease();
 
 // 有按键活动 -> 唤醒屏幕、重置息屏计时
 void SystemNoteActivity();
+uint32_t SystemLastActivityMs();       // 最近一次按键 / 连接 / 上位机消息的时刻（自动休眠用）
 
 // 串口诊断命令（单键，不需要回车）
 void SystemHandleSerial();
